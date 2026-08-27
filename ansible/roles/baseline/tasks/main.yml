@@ -1,0 +1,72 @@
+---
+# Baseline post-provision configuration for an EKS-managed node -- this is
+# the "5. Ansible installs runtime dependencies" step of the original
+# design doc's infrastructure workflow (ROADMAP.md's linked design doc,
+# section 6.4), scoped to what's actually true for an EKS-managed node
+# group: kubelet, containerd, and the CNI are already installed and
+# started by EKS's own AMI bootstrap before this role ever runs (that's
+# what "managed" means) -- this role adds what EKS's bootstrap does *not*
+# cover, and verifies (never re-installs or restarts) the parts that
+# aren't this role's to own.
+#
+# Targets Amazon Linux 2023 (AL2023) nodes specifically -- the standard
+# EKS-optimized AMI family as of writing (dnf-based). A Bottlerocket node
+# group (ami_type = BOTTLEROCKET_x86_64 in
+# terraform/modules/eks/main.tf's aws_eks_node_group) would not be
+# reachable this way at all -- Bottlerocket has no traditional package
+# manager or general-purpose shell, and is configured through its own API
+# instead. This repo's node group uses the AL2023 default, so that
+# mismatch doesn't apply today, but it's the kind of assumption worth
+# stating rather than leaving implicit.
+
+- name: Install baseline packages
+  ansible.builtin.dnf:
+    name: "{{ baseline_packages }}"
+    state: present
+
+- name: Apply available package updates (upgrades only -- never installs anything new)
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+    update_only: true
+
+- name: Ensure chronyd is enabled and running
+  ansible.builtin.systemd:
+    name: chronyd
+    enabled: true
+    state: started
+
+- name: Set timezone to UTC
+  community.general.timezone:
+    name: "{{ baseline_timezone }}"
+  # Every service's log line (see ROADMAP.md's linked design doc, section
+  # 17.2's "Logs must include ... timestamp") and every metric Prometheus
+  # scrapes needs to correlate across nodes without a timezone offset in
+  # the way -- this is the one setting that makes that reliable regardless
+  # of which AWS region a node launched in.
+
+- name: Gather service facts (read-only -- does not start/stop/restart anything)
+  ansible.builtin.service_facts:
+
+- name: Confirm containerd is active
+  ansible.builtin.assert:
+    that:
+      - "'containerd.service' in ansible_facts.services"
+      - "ansible_facts.services['containerd.service'].state == 'running'"
+    fail_msg: >-
+      containerd is not running on {{ inventory_hostname }}. This role never
+      installs or starts containerd -- EKS's own AMI bootstrap does, before
+      a node ever registers -- so this failing means the node's EKS
+      bootstrap itself didn't complete correctly. Check the EC2 instance's
+      system log (EC2 console -> instance -> Actions -> Monitor and
+      troubleshoot -> Get system log) or `kubectl get nodes`, not this
+      playbook.
+    success_msg: "containerd is running on {{ inventory_hostname }}"
+
+- name: Confirm kubelet is active
+  ansible.builtin.assert:
+    that:
+      - "'kubelet.service' in ansible_facts.services"
+      - "ansible_facts.services['kubelet.service'].state == 'running'"
+    fail_msg: "kubelet is not running on {{ inventory_hostname }} -- same caveat as the containerd check above."
+    success_msg: "kubelet is running on {{ inventory_hostname }}"

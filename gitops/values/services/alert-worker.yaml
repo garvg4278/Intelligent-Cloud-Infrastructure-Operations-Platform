@@ -1,0 +1,15 @@
+# The Celery worker that evaluates alert rules against Prometheus, links
+# breaches to incidents, and hands delivery off to notification -- see
+# services/alert/README.md for the full flow. Without this Application,
+# alert rules would sit inert: created via the API, never actually
+# evaluated, since alert-beat (alert-beat.yaml) only enqueues the
+# evaluation job, it doesn't run it.
+image:
+  repository: icop-alert
+  tag: latest
+
+envFromSecret: icop-alert-secrets
+
+workload:
+  type: worker
+  command: ["celery", "-A", "app.tasks", "worker", "--loglevel=info"]

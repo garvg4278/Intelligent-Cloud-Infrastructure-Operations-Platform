@@ -1,0 +1,28 @@
+# Celery Beat -- the scheduler that enqueues "evaluate this rule" jobs on
+# a timer (docker-compose.yml's 30s schedule). Does no evaluation work
+# itself; alert-worker.yaml is what actually consumes what this enqueues.
+# Deliberately its own Application, not folded into alert-worker.yaml,
+# for the same reason docker-compose.yml runs them as two separate
+# containers: Celery Beat must never run as more than one instance at a
+# time (two schedulers would double-enqueue every job) while the worker
+# consuming those jobs should scale freely -- keeping them as separate
+# Applications means autoscaling.enabled (see
+# gitops/values/environments/production.yaml) can apply to the worker
+# without ever risking a second beat instance.
+image:
+  repository: icop-alert
+  tag: latest
+
+envFromSecret: icop-alert-secrets
+
+workload:
+  type: worker
+  command: ["celery", "-A", "app.tasks", "beat", "--loglevel=info"]
+
+# Exactly one replica, always -- see this file's own note above for why.
+# Overrides whatever values/environments/{staging,production}.yaml set,
+# and autoscaling must stay disabled here regardless of what the
+# environment tier default is.
+replicaCount: 1
+autoscaling:
+  enabled: false

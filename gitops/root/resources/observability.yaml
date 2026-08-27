@@ -1,0 +1,75 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: icop-observability
+  namespace: argocd
+spec:
+  project: icop
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: "88.5.2" # ArgoCD Helm sources pin an exact chart version, not a floating range -- re-check `helm search repo prometheus-community/kube-prometheus-stack --versions` for whatever's actually current before applying; this was current as of when this was written.
+    helm:
+      valuesObject:
+        prometheus:
+          prometheusSpec:
+            retention: 15d
+            additionalScrapeConfigs:
+              # Same nine ICOP-service targets as infra/prometheus/prometheus.yml
+              # (the docker-compose Prometheus config), retargeted at
+              # in-cluster K8s Service DNS instead of docker-compose
+              # service names -- kept as one literal list here rather than
+              # switching to ServiceMonitor/PodMonitor-based discovery,
+              # since that needs pod-level labels the chart doesn't set
+              # yet (see infra/helm/service-chart's README for that gap).
+              # A namespace-wide PodMonitor selecting on a shared
+              # icop.io/component label is the natural follow-up once
+              # that label exists.
+              - job_name: gateway
+                static_configs:
+                  - targets: ["gateway.icop-staging.svc.cluster.local:8000"]
+              - job_name: auth
+                static_configs:
+                  - targets: ["auth.icop-staging.svc.cluster.local:8000"]
+              - job_name: deployment
+                static_configs:
+                  - targets: ["deployment.icop-staging.svc.cluster.local:8000"]
+              - job_name: incident
+                static_configs:
+                  - targets: ["incident.icop-staging.svc.cluster.local:8000"]
+              - job_name: alert
+                static_configs:
+                  - targets: ["alert.icop-staging.svc.cluster.local:8000"]
+              - job_name: aiops
+                static_configs:
+                  - targets: ["aiops.icop-staging.svc.cluster.local:8000"]
+              - job_name: analytics
+                static_configs:
+                  - targets: ["analytics.icop-staging.svc.cluster.local:8000"]
+              - job_name: notification
+                static_configs:
+                  - targets: ["notification.icop-staging.svc.cluster.local:8000"]
+              - job_name: audit
+                static_configs:
+                  - targets: ["audit.icop-staging.svc.cluster.local:8000"]
+              - job_name: infrastructure
+                static_configs:
+                  - targets: ["infrastructure.icop-staging.svc.cluster.local:8000"]
+        grafana:
+          enabled: true
+          adminPassword: "REPLACE_BEFORE_APPLYING" # or better: set `grafana.admin.existingSecret` instead of a plaintext value here at all -- see gitops/README.md
+          # infra/grafana/dashboards/*.json (the docker-compose Grafana's
+          # existing, real dashboard) is the intended starting point for a
+          # ConfigMap-provisioned dashboard here via `grafana.dashboards`
+          # -- not yet wired up; the docker-compose dashboard is scoped to
+          # the same 5 services infra/prometheus/prometheus.yml was, which
+          # this Application's scrape config above already goes beyond.
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

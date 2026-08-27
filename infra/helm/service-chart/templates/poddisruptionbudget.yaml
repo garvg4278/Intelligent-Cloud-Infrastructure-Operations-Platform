@@ -1,0 +1,24 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "service-chart.fullname" . }}
+  labels:
+    {{- include "service-chart.labels" . | nindent 4 }}
+spec:
+  # maxUnavailable, not minAvailable: the two sound interchangeable but
+  # differ at the edge that actually matters here. minAvailable: 1 against
+  # a replicaCount of 1 (someone overriding the chart's own default of 2)
+  # would mean disruptionsAllowed is permanently 0 -- no voluntary
+  # eviction (a node drain during a routine EKS AMI upgrade, cluster
+  # autoscaler consolidating nodes) could EVER proceed, which is a worse
+  # outcome than the brief unavailability a PDB exists to limit in the
+  # first place: a drain that can never complete blocks whatever
+  # maintenance was waiting on it, for every service sharing that node,
+  # not just this one. maxUnavailable: 1 degrades gracefully at any
+  # replica count instead, including 1.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "service-chart.selectorLabels" . | nindent 6 }}
+{{- end }}

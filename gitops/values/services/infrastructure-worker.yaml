@@ -1,0 +1,36 @@
+# The Celery worker that actually shells out to terraform/ansible-playbook
+# -- without this Application, POST /api/v1/infrastructure/environments
+# would enqueue a provision job that never runs, forever stuck at
+# "pending". See services/infrastructure/README.md for the full state
+# machine this worker drives.
+image:
+  repository: icop-infrastructure
+  tag: latest
+
+envFromSecret: icop-infrastructure-secrets
+
+workload:
+  type: worker
+  command: ["celery", "-A", "app.tasks", "worker", "--loglevel=info"]
+
+# A real, non-obvious operational wrinkle worth naming: this worker
+# provisions the SAME staging/production EKS clusters that the GitOps
+# ApplicationSets (gitops/root/resources/) deploy every ICOP service --
+# including this worker itself -- onto. `terraform apply` for a brand
+# new environment therefore has to happen before this Application can
+# run anywhere at all (there's no cluster yet for it to schedule onto),
+# which is a real bootstrap-ordering constraint, not a flaw specific to
+# this file -- see terraform/README.md's "Order of operations".
+
+# Deliberately does NOT set clusterRbac.enabled (see
+# gitops/values/services/deployment-worker.yaml and
+# infra/helm/service-chart/templates/clusterrole.yaml for what that
+# toggle is and why deployment-worker needs it): this service's own code
+# never calls kubectl or helm.
+# services/infrastructure/app/terraform_orchestrator.py and
+# ansible_orchestrator.py only ever shell out to `terraform` and
+# `ansible-playbook`, both of which talk to AWS (via IRSA and AWS SSM
+# respectively), never this cluster's own Kubernetes API. If a future
+# "register the new cluster" step starts running kubectl for real,
+# revisit this -- until then, granting cluster-wide K8s RBAC here would
+# be unused permission with no code behind it.

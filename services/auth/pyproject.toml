@@ -1,0 +1,18 @@
+[tool.ruff]
+line-length = 110
+# Once a migration exists, it's a historical record of what ran against a
+# real database -- rewriting it for style later is the same anti-pattern
+# as editing a merged migration's logic. env.py is hand-maintained code
+# and stays linted normally.
+exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "BLE"]
+ignore = [
+    # FastAPI's dependency-injection system IS calling Depends(...)/
+    # Depends(factory(...)) as an argument default -- that's the framework's
+    # real API, not the mutable-default-argument footgun this rule exists
+    # to catch. Flagging it here would mean either fighting the linter on
+    # every route or writing non-idiomatic FastAPI to satisfy it.
+    "B008",
+]

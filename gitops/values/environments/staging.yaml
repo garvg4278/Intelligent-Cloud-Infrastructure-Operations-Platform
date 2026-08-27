@@ -1,0 +1,23 @@
+# Environment-tier values -- merged UNDER values/services/<name>.yaml (see
+# gitops/root/resources/applicationset-staging.yaml's helm.valueFiles
+# order: this file first, the per-service file second, so a per-service
+# value always wins a conflict). Every ICOP service in staging shares
+# these unless its own file overrides one.
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    cpu: 250m
+    memory: 192Mi
+
+autoscaling:
+  enabled: false
+
+# See infra/helm/service-chart/templates/networkpolicy.yaml for exactly
+# what this restricts (and, just as importantly, what it deliberately
+# doesn't).
+networkPolicy:
+  enabled: true

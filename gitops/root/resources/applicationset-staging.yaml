@@ -1,0 +1,78 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: icop-services-staging
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+
+  generators:
+    - list:
+        elements:
+          # Real gap this closes (Phase 6): the five worker/beat processes
+          # (docker-compose.yml's *-worker and alert-beat containers) are
+          # what actually consume the jobs the API services below enqueue
+          # -- without them, every POST that triggers async work
+          # (deployments, alert evaluation, notifications, infrastructure
+          # provisioning) would accept the request and then do nothing.
+          # Each one's own values file (gitops/values/services/*.yaml)
+          # sets workload.type: worker and the real celery command it
+          # runs -- see infra/helm/service-chart/values.yaml's workload
+          # block for what that changes structurally (no Service, no HTTP
+          # probes -- there's no HTTP server in a worker to expose or probe).
+          - service: gateway
+          - service: auth
+          - service: deployment
+          - service: deployment-worker
+          - service: incident
+          - service: alert
+          - service: alert-worker
+          - service: alert-beat
+          - service: aiops
+          - service: analytics
+          - service: notification
+          - service: notification-worker
+          - service: audit
+          - service: infrastructure
+          - service: infrastructure-worker
+
+  template:
+    metadata:
+      name: "icop-staging-{{.service}}"
+      labels:
+        icop.io/environment: staging
+        icop.io/service: "{{.service}}"
+    spec:
+      project: icop
+      # Multi-source: one source is the Helm chart (shared by every ICOP
+      # service, infra/helm/service-chart), the other is a second checkout
+      # of the SAME repo under the ref name "values", which is what lets
+      # helm.valueFiles below reference files from gitops/values/ -- a
+      # different top-level directory than the chart itself. This is
+      # ArgoCD's documented multi-source pattern for exactly this
+      # chart-and-values-live-in-different-paths shape, not something
+      # specific to this repo. REPLACE repoURL with this repo's real Git
+      # remote once it has one -- see gitops/README.md; noted once here
+      # rather than on all twenty Applications these two ApplicationSets
+      # produce.
+      sources:
+        - repoURL: https://github.com/YOUR_ORG/icop-platform.git
+          targetRevision: HEAD
+          path: infra/helm/service-chart
+          helm:
+            valueFiles:
+              - $values/gitops/values/environments/staging.yaml
+              - $values/gitops/values/services/{{.service}}.yaml
+        - repoURL: https://github.com/YOUR_ORG/icop-platform.git
+          targetRevision: HEAD
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: icop-staging
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

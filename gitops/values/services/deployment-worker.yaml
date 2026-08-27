@@ -1,0 +1,59 @@
+# The Celery worker that actually shells out to helm/kubectl -- without
+# this Application, POST /api/v1/deployments would accept requests and
+# enqueue Celery tasks that then sit in RabbitMQ forever, since nothing
+# would be consuming that queue. See gitops/README.md's Phase 6 notes for
+# how this got missed the first time through.
+image:
+  repository: icop-deployment # same image as deployment.yaml -- docker-compose.yml's deployment-worker service builds from the exact same Dockerfile, just with a different command, and this mirrors that
+  tag: latest
+
+envFromSecret: icop-deployment-secrets
+
+workload:
+  type: worker
+  command: ["celery", "-A", "app.tasks", "worker", "--loglevel=info"]
+
+# The one real IRSA consumer today (terraform/modules/irsa's single
+# instantiation, in environments/staging|production/main.tf) -- lets this
+# worker's pods read/write the artifacts S3 bucket
+# (terraform/modules/object_storage) with no static AWS credentials. On
+# the worker, not deployment.yaml's stateless API pod, since this is the
+# process that actually shells out to helm/kubectl and would be where
+# artifact upload/download eventually gets built -- see
+# terraform/modules/irsa/README.md for what's still missing (no
+# ObjectStorageClient exists yet) and this file's own `name:` below for
+# why it's spelled out explicitly rather than left to the chart's default.
+#
+# Replace the placeholder role-arn with the real `terraform output
+# deployment_irsa_role_arn` value before this actually has working AWS
+# permissions -- until then, the ServiceAccount still gets created and
+# the worker still starts fine, it just fails any AWS S3 call with an
+# access-denied rather than an IAM-role-shaped one.
+serviceAccount:
+  create: true
+  # Explicit, not left to the chart's own fallback (which would use this
+  # release's name, "icop-{env}-deployment-worker") --
+  # terraform/environments/*/main.tf's deployment_irsa module trusts
+  # exactly "system:serviceaccount:icop-{env}:deployment-worker". A
+  # mismatch here wouldn't fail loudly: the role ARN annotation would be
+  # present and look correctly wired, but AssumeRoleWithWebIdentity would
+  # still fail its trust-policy condition since the pod's actual OIDC
+  # subject wouldn't match what Terraform told AWS to trust.
+  name: deployment-worker
+  annotations:
+    eks.amazonaws.com/role-arn: "REPLACE_WITH_terraform_output_deployment_irsa_role_arn"
+
+# Separate gap from IRSA above, now closed: helm/kubectl also need
+# permission to act against the Kubernetes API of the cluster they're
+# managing (create/update Deployments, read rollout status) -- that's
+# in-cluster K8s RBAC, a genuinely different mechanism than IRSA (which
+# only grants AWS API permissions, not Kubernetes API permissions). The
+# docker-compose equivalent works around this by mounting an operator's
+# own kubeconfig instead (see the root README), which doesn't translate
+# directly to how a pod would authenticate to its own cluster's API
+# server -- this is the in-cluster equivalent. See
+# infra/helm/service-chart/templates/clusterrole.yaml for exactly what
+# this grants, and why it has to be cluster-scoped rather than a
+# namespaced Role, given what orchestrator.py + executor.py actually do.
+clusterRbac:
+  enabled: true

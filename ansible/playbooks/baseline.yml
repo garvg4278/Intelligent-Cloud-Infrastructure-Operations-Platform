@@ -1,0 +1,6 @@
+---
+- name: Apply baseline configuration to every EKS node
+  hosts: k8s_nodes
+  gather_facts: true
+  roles:
+    - baseline

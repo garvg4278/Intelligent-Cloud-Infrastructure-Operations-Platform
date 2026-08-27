@@ -1,0 +1,404 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: icop
+      POSTGRES_PASSWORD: icop
+      POSTGRES_DB: icop
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U icop"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: icop
+      RABBITMQ_DEFAULT_PASS: icop
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  auth:
+    build: ./services/auth
+    environment:
+      DATABASE_URL: postgresql+psycopg2://icop:icop@postgres:5432/icop
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+      REFRESH_TOKEN_EXPIRE_DAYS: "7"
+      AUDIT_SERVICE_URL: http://audit:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      audit:
+        condition: service_started
+    ports:
+      - "8001:8000"
+
+  deployment:
+    build: ./services/deployment
+    environment:
+      DATABASE_URL: postgresql+psycopg2://icop:icop@postgres:5432/icop
+      CELERY_BROKER_URL: amqp://icop:icop@rabbitmq:5672//
+      CHART_PATH: /charts/service-chart
+      HEALTH_CHECK_TIMEOUT_SECONDS: "60"
+      AUDIT_SERVICE_URL: http://audit:8000
+    volumes:
+      - ./infra/helm/service-chart:/charts/service-chart:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      audit:
+        condition: service_started
+    ports:
+      - "8002:8000"
+
+  # Actually runs `helm`/`kubectl` for real deployments. Needs a reachable
+  # cluster to do anything useful -- mount a real kubeconfig (uncomment
+  # below) if you have one; without it, deploy requests will enqueue and
+  # then fail cleanly at the `helm upgrade` step with a recorded error,
+  # same as any other orchestrator failure.
+  deployment-worker:
+    build: ./services/deployment
+    environment:
+      DATABASE_URL: postgresql+psycopg2://icop:icop@postgres:5432/icop
+      CELERY_BROKER_URL: amqp://icop:icop@rabbitmq:5672//
+      CHART_PATH: /charts/service-chart
+      HEALTH_CHECK_TIMEOUT_SECONDS: "60"
+      AUDIT_SERVICE_URL: http://audit:8000
+    volumes:
+      - ./infra/helm/service-chart:/charts/service-chart:ro
+      # - ~/.kube:/root/.kube:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      audit:
+        condition: service_started
+    command: celery -A app.tasks worker --loglevel=info
+
+  incident:
+    build: ./services/incident
+    environment:
+      DATABASE_URL: postgresql+psycopg2://icop:icop@postgres:5432/icop
+      AUDIT_SERVICE_URL: http://audit:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      audit:
+        condition: service_started
+    ports:
+      - "8003:8000"
+
+  alert:
+    build: ./services/alert
+    environment:
+      DATABASE_URL: postgresql+psycopg2://icop:icop@postgres:5432/icop
+      CELERY_BROKER_URL: amqp://icop:icop@rabbitmq:5672//
+      PROMETHEUS_URL: http://prometheus:9090
+      INCIDENT_SERVICE_URL: http://incident:8000
+      NOTIFICATION_SERVICE_URL: http://notification:8000
+      AUDIT_SERVICE_URL: http://audit:8000
+      EVALUATION_INTERVAL_SECONDS: "30"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      incident:
+        condition: service_started
+      notification:
+        condition: service_started
+      audit:
+        condition: service_started
+    ports:
+      - "8004:8000"
+
+  alert-worker:
+    build: ./services/alert
+    environment:
+      DATABASE_URL: postgresql+psycopg2://icop:icop@postgres:5432/icop
+      CELERY_BROKER_URL: amqp://icop:icop@rabbitmq:5672//
+      PROMETHEUS_URL: http://prometheus:9090
+      INCIDENT_SERVICE_URL: http://incident:8000
+      NOTIFICATION_SERVICE_URL: http://notification:8000
+      AUDIT_SERVICE_URL: http://audit:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      notification:
+        condition: service_started
+      audit:
+        condition: service_started
+    command: celery -A app.tasks worker --loglevel=info
+
+  # Fires the periodic "evaluate every active rule" task on
+  # EVALUATION_INTERVAL_SECONDS. Separate from alert-worker because Celery
+  # beat (the scheduler) and the worker (the executor) are different
+  # processes even when they share the same broker and task code.
+  alert-beat:
+    build: ./services/alert
+    environment:
+      DATABASE_URL: postgresql+psycopg2://icop:icop@postgres:5432/icop
+      CELERY_BROKER_URL: amqp://icop:icop@rabbitmq:5672//
+      PROMETHEUS_URL: http://prometheus:9090
+      INCIDENT_SERVICE_URL: http://incident:8000
+      NOTIFICATION_SERVICE_URL: http://notification:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    command: celery -A app.tasks beat --loglevel=info
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+  aiops:
+    build: ./services/aiops
+    environment:
+      DATABASE_URL: postgresql+psycopg2://icop:icop@postgres:5432/icop
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DEPLOYMENT_SERVICE_URL: http://deployment:8000
+      INCIDENT_SERVICE_URL: http://incident:8000
+      ALERT_SERVICE_URL: http://alert:8000
+      PROMETHEUS_URL: http://prometheus:9090
+    depends_on:
+      postgres:
+        condition: service_healthy
+      deployment:
+        condition: service_started
+      incident:
+        condition: service_started
+      alert:
+        condition: service_started
+    ports:
+      - "8005:8000"
+
+  analytics:
+    build: ./services/analytics
+    environment:
+      DEPLOYMENT_SERVICE_URL: http://deployment:8000
+      INCIDENT_SERVICE_URL: http://incident:8000
+      ALERT_SERVICE_URL: http://alert:8000
+    depends_on:
+      deployment:
+        condition: service_started
+      incident:
+        condition: service_started
+      alert:
+        condition: service_started
+    ports:
+      - "8006:8000"
+
+  notification:
+    build: ./services/notification
+    environment:
+      DATABASE_URL: postgresql+psycopg2://icop:icop@postgres:5432/icop
+      CELERY_BROKER_URL: amqp://icop:icop@rabbitmq:5672//
+      # SMTP_HOST left unset -- only the "webhook" channel is available
+      # without it. Set SMTP_HOST/USERNAME/PASSWORD here to enable "email".
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8007:8000"
+
+  notification-worker:
+    build: ./services/notification
+    environment:
+      DATABASE_URL: postgresql+psycopg2://icop:icop@postgres:5432/icop
+      CELERY_BROKER_URL: amqp://icop:icop@rabbitmq:5672//
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    command: celery -A app.tasks worker --loglevel=info
+
+  audit:
+    build: ./services/audit
+    environment:
+      DATABASE_URL: postgresql+psycopg2://icop:icop@postgres:5432/icop
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8008:8000"
+
+  # Actually runs `terraform`/`ansible-playbook` for real environment
+  # provisioning. Needs real AWS credentials to do anything useful --
+  # AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY default to empty below, same
+  # "bring your own" pattern as ANTHROPIC_API_KEY on aiops and a mounted
+  # kubeconfig on deployment-worker. Without them, POST
+  # /environments enqueues and then fails cleanly at `terraform init`
+  # (no valid credential sources), recorded as provision_failed with the
+  # real error -- see services/infrastructure/README.md.
+  infrastructure:
+    build: ./services/infrastructure
+    environment:
+      DATABASE_URL: postgresql+psycopg2://icop:icop@postgres:5432/icop
+      CELERY_BROKER_URL: amqp://icop:icop@rabbitmq:5672//
+      TERRAFORM_ROOT: /terraform
+      ANSIBLE_ROOT: /ansible
+      TERRAFORM_APPLY_TIMEOUT_SECONDS: "1800"
+      ANSIBLE_RUN_TIMEOUT_SECONDS: "900"
+      AUDIT_SERVICE_URL: http://audit:8000
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    volumes:
+      # NOT :ro -- `terraform init` writes a .terraform/ provider
+      # plugin cache and a .terraform.lock.hcl into this directory (state
+      # itself goes to the S3 backend configured in
+      # terraform/environments/*/backend.tf, not here, but the provider
+      # cache is genuinely local). ansible/ has no equivalent write need
+      # -- ansible.cfg disables retry-file writes -- so it stays read-only.
+      - ./terraform:/terraform
+      - ./ansible:/ansible:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      audit:
+        condition: service_started
+    ports:
+      - "8009:8000"
+
+  infrastructure-worker:
+    build: ./services/infrastructure
+    environment:
+      DATABASE_URL: postgresql+psycopg2://icop:icop@postgres:5432/icop
+      CELERY_BROKER_URL: amqp://icop:icop@rabbitmq:5672//
+      TERRAFORM_ROOT: /terraform
+      ANSIBLE_ROOT: /ansible
+      TERRAFORM_APPLY_TIMEOUT_SECONDS: "1800"
+      ANSIBLE_RUN_TIMEOUT_SECONDS: "900"
+      AUDIT_SERVICE_URL: http://audit:8000
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    volumes:
+      # NOT :ro -- `terraform init` writes a .terraform/ provider
+      # plugin cache and a .terraform.lock.hcl into this directory (state
+      # itself goes to the S3 backend configured in
+      # terraform/environments/*/backend.tf, not here, but the provider
+      # cache is genuinely local). ansible/ has no equivalent write need
+      # -- ansible.cfg disables retry-file writes -- so it stays read-only.
+      - ./terraform:/terraform
+      - ./ansible:/ansible:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      audit:
+        condition: service_started
+    command: celery -A app.tasks worker --loglevel=info
+
+  gateway:
+    build: ./services/gateway
+    environment:
+      AUTH_SERVICE_URL: http://auth:8000
+      # Same variable, same value, as the auth service above -- required
+      # for app/security.py's gateway-level JWT verification to accept
+      # tokens auth actually issued. Both default to "dev-secret-change-me"
+      # if this isn't set at all, which is why local `docker compose up`
+      # works with no .env -- but only because they'd coincidentally
+      # default to the same thing, not because they're actually wired
+      # together. Setting a real SECRET_KEY and only putting it on one of
+      # the two would silently break every authenticated request.
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      DEPLOYMENT_SERVICE_URL: http://deployment:8000
+      INCIDENT_SERVICE_URL: http://incident:8000
+      ALERT_SERVICE_URL: http://alert:8000
+      AIOPS_SERVICE_URL: http://aiops:8000
+      ANALYTICS_SERVICE_URL: http://analytics:8000
+      NOTIFICATION_SERVICE_URL: http://notification:8000
+      AUDIT_SERVICE_URL: http://audit:8000
+      INFRASTRUCTURE_SERVICE_URL: http://infrastructure:8000
+      REDIS_URL: redis://redis:6379/0
+      RATE_LIMIT_REQUESTS: "100"
+      RATE_LIMIT_WINDOW_SECONDS: "60"
+    depends_on:
+      redis:
+        condition: service_healthy
+      auth:
+        condition: service_started
+      deployment:
+        condition: service_started
+      incident:
+        condition: service_started
+      alert:
+        condition: service_started
+      aiops:
+        condition: service_started
+      analytics:
+        condition: service_started
+      notification:
+        condition: service_started
+      audit:
+        condition: service_started
+      infrastructure:
+        condition: service_started
+    ports:
+      - "8000:8000"
+
+  # Browser-facing operations console. It serves the React application and
+  # reverse-proxies /api/ to the gateway, keeping tokens on a same-origin
+  # path in local development and avoiding a permissive CORS configuration.
+  frontend:
+    build: ./frontend
+    depends_on:
+      gateway:
+        condition: service_started
+    ports:
+      - "8080:8080"
+
+volumes:
+  postgres_data:

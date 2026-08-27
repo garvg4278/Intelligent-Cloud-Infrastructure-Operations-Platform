@@ -1,0 +1,15 @@
+# Identity for the "alert" ICOP service -- deployed from the one shared
+# chart at infra/helm/service-chart with this file layered on top of
+# values/environments/<env>.yaml (see gitops/root/resources/).
+image:
+  repository: icop-alert
+  tag: latest # replace with a real image digest/tag once a CI pipeline builds and pushes one -- "latest" is a local-dev convenience, not a real deployment practice (see this directory's README)
+
+# Every ICOP service reads its config from env vars (see
+# services/alert/app/config.py) -- DATABASE_URL, REDIS_URL, JWT secrets,
+# etc. all need to exist in this Secret before this Application will
+# actually come up healthy. Create it out-of-band (kubectl create secret,
+# or an External Secrets Operator synced from the Secrets Manager entry
+# terraform/modules/rds's secret_arn output points at) -- this chart
+# intentionally never manages secret *contents*, only references a name.
+envFromSecret: icop-alert-secrets

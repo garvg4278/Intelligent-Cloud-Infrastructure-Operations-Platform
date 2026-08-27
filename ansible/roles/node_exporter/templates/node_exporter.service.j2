@@ -1,0 +1,32 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Prometheus Node Exporter
+Documentation=https://github.com/prometheus/node_exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User={{ node_exporter_user }}
+Group={{ node_exporter_user }}
+Type=simple
+ExecStart={{ node_exporter_install_dir }}/node_exporter \
+  --web.listen-address=:{{ node_exporter_port }} \
+  --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/credentials/.+|var/lib/docker/.+|var/lib/containerd/.+)($|/) \
+  --collector.netclass.ignored-devices=^(veth.*|cali.*|cbr.*)$
+
+# Hardening -- node_exporter needs to read host metrics, not write
+# anywhere or hold onto elevated privileges beyond that.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

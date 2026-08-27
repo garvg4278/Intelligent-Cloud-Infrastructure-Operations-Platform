@@ -1,0 +1,12 @@
+image:
+  repository: icop-deployment
+  tag: latest # see gateway.yaml's comment on this -- same caveat, every service
+
+envFromSecret: icop-deployment-secrets
+
+# IRSA binding lives on deployment-worker.yaml, not here -- the stateless
+# API pod only accepts HTTP requests and enqueues Celery tasks, it has no
+# plausible reason to need direct AWS access. It's the worker that
+# actually shells out to helm/kubectl and would be where artifact
+# upload/download eventually gets built -- see
+# terraform/modules/irsa/README.md and gitops/values/services/deployment-worker.yaml.

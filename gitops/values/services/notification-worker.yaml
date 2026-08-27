@@ -1,0 +1,14 @@
+# The Celery worker that actually delivers notifications (webhook + SMTP
+# email, with retry/backoff -- see services/notification/README.md).
+# Without this Application, POST /api/v1/notifications (and the alert
+# service's automatic alert -> notification handoff) would enqueue
+# deliveries that never go out.
+image:
+  repository: icop-notification
+  tag: latest
+
+envFromSecret: icop-notification-secrets
+
+workload:
+  type: worker
+  command: ["celery", "-A", "app.tasks", "worker", "--loglevel=info"]

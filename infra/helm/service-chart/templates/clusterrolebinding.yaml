@@ -1,0 +1,25 @@
+{{- if .Values.clusterRbac.enabled }}
+# Binds templates/clusterrole.yaml to this release's own ServiceAccount --
+# see that file for the full reasoning on why this needs to be
+# cluster-scoped at all.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "service-chart.fullname" . }}
+  labels:
+    {{- include "service-chart.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "service-chart.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "service-chart.serviceAccountName" . }}
+    # Always THIS release's own namespace (icop-staging / icop-production
+    # -- wherever this Application was actually deployed), never the
+    # "staging"/"production" namespace the ClusterRole's rules above let
+    # it act on. A ClusterRoleBinding's subject is always where the
+    # ServiceAccount itself lives; that's a different thing entirely from
+    # which namespaces the role it's bound to grants access over.
+    namespace: {{ .Release.Namespace }}
+{{- end }}

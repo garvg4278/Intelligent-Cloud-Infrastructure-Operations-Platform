@@ -1,0 +1,62 @@
+# Helm values for installing ArgoCD itself -- the one piece of this repo's
+# GitOps setup that has to be applied imperatively (`helm install`), once,
+# before root-app.yaml (../root/root-app.yaml) can bootstrap everything
+# else declaratively. Not itself managed by ArgoCD (a thing can't GitOps
+# its own initial installation) -- upgrading ArgoCD later is a deliberate
+# `helm upgrade` against this same file, not a Git-triggered sync.
+#
+#   helm repo add argo https://argoproj.github.io/argo-helm
+#   helm repo update
+#   helm search repo argo/argo-cd --versions   # pin a real version before installing -- not done here, see this file's own note below
+#   kubectl create namespace argocd
+#   helm install argocd argo/argo-cd -n argocd -f gitops/bootstrap/argocd-values.yaml
+
+# applicationset-staging.yaml and applicationset-production.yaml (both in
+# ../root/resources/) need the ApplicationSet controller running -- it's
+# on by default in current chart versions, kept explicit here so that
+# default changing upstream someday doesn't silently break this repo's
+# bootstrap.
+applicationSet:
+  enabled: true
+
+server:
+  # ClusterIP + `kubectl port-forward svc/argocd-server -n argocd 8080:443`
+  # is this repo's actual starting point -- no Ingress/LoadBalancer wired
+  # up. Fine for getting the UI open from a laptop against a real cluster;
+  # exposing the ArgoCD UI/API properly (real TLS, real auth in front of
+  # it, not just port-forward) is real follow-up work before this is
+  # something a team other than one operator would use.
+  service:
+    type: ClusterIP
+
+  # Local admin user (`argocd admin initial-password`) is what this
+  # bootstraps with -- no SSO/Dex/OIDC wired up. Fine for one operator
+  # bootstrapping a demo environment, not fine for a real team; wiring
+  # `dex.enabled` + an OIDC provider is real follow-up work, not done here.
+  extraArgs:
+    - --insecure # TLS terminates at the port-forward/whatever's in front of this in real use, not at argocd-server itself -- see the note above about Ingress not being set up yet
+
+controller:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+repoServer:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Notifications controller (Slack/email alerts on sync failure, the kind
+# of thing this platform's own Notification service does for ITS alerts --
+# see services/notification/) -- left at the chart's default (disabled)
+# rather than half-configured with no real receiver wired up.
+notifications:
+  enabled: false

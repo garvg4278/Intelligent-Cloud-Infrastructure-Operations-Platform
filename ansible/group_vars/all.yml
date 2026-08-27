@@ -1,0 +1,20 @@
+---
+# Every host in this inventory is reached over AWS Systems Manager Session
+# Manager, never SSH -- see ../README.md for why, and
+# ../../terraform/modules/eks/main.tf's node_ssm policy attachment for the
+# IAM side that makes it possible.
+ansible_connection: amazon.aws.aws_ssm
+ansible_aws_ssm_region: "{{ aws_region | default('us-east-1') }}"
+# No default on purpose -- this is the terraform output
+# `ssm_transfer_bucket` from environments/staging or environments/production,
+# and using the wrong environment's bucket by silently falling back to one
+# would be a worse failure mode than refusing to run at all. Pass with:
+#   ansible-playbook ... -e ansible_aws_ssm_bucket_name=<terraform output>
+ansible_aws_ssm_bucket_name: "{{ ssm_transfer_bucket }}"
+ansible_shell_type: sh
+
+# The SSM connection plugin doesn't honor ansible_user/remote_user (see
+# ../README.md) -- commands land as the ssm-agent user by default, so
+# become is how every task in this repo actually gets root.
+become: true
+become_user: root

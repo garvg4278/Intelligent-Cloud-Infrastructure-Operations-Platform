@@ -1,0 +1,13 @@
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "BLE"]
+ignore = [
+    # FastAPI's dependency-injection system IS calling Depends(...)/
+    # Depends(factory(...)) as an argument default -- that's the framework's
+    # real API, not the mutable-default-argument footgun this rule exists
+    # to catch. Flagging it here would mean either fighting the linter on
+    # every route or writing non-idiomatic FastAPI to satisfy it.
+    "B008",
+]

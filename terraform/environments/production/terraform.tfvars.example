@@ -1,0 +1,5 @@
+# Copy to terraform.tfvars and adjust for your account. See variables.tf
+# for what every value here defaults to if omitted.
+
+aws_region = "us-east-1"
+azs        = ["us-east-1a", "us-east-1b", "us-east-1c"]

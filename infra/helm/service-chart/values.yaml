@@ -1,0 +1,127 @@
+replicaCount: 2
+
+image:
+  repository: icop-auth
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Real gap this closes: docker-compose.yml runs 20 containers, 5 of which
+# are Celery workers/beat (deployment-worker, alert-worker, alert-beat,
+# notification-worker, infrastructure-worker) that actually consume the
+# jobs the API containers enqueue -- a deployment trigger, an alert
+# evaluation, a notification send, an infrastructure provision/destroy
+# ALL just sit in RabbitMQ forever without one. Every gitops/ Application
+# before this fix only ever deployed the 10 API containers -- a real K8s
+# deployment via this repo's GitOps would have accepted every request and
+# done nothing with any of them. "webService" (default) is every prior
+# behavior, unchanged: a Service, HTTP liveness/readiness probes, and the
+# image's own default CMD (alembic migrate + uvicorn -- see each
+# service's Dockerfile). "worker" is for the five processes above: no
+# Service (nothing calls a worker over HTTP -- it only makes outbound
+# connections to RabbitMQ/Postgres/whatever it's orchestrating), no HTTP
+# probes (there's no HTTP server to probe), and workload.command
+# overrides the container's command entirely, skipping the migration
+# step the web deployment of the same service already runs (only one
+# thing should run `alembic upgrade head`, not every replica of every
+# process sharing that image).
+workload:
+  type: webService
+  # Only read when type: worker, e.g.:
+  #   command: ["celery", "-A", "app.tasks", "worker", "--loglevel=info"]
+  command: []
+
+service:
+  port: 8000
+  type: ClusterIP
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Every ICOP service exposes /health (shallow -- liveness) and
+# /health/ready (deep, checks database connectivity -- readiness). See
+# each service's app/main.py for why the two are deliberately different
+# depths -- briefly: liveness checking a dependency would restart every
+# pod at once during a DB outage, which fixes nothing and adds a restart
+# storm on top of an existing problem; readiness checking one is exactly
+# right, since it just stops routing traffic to a pod that can't serve it.
+# Not read at all when workload.type is "worker" -- see deployment.yaml.
+healthCheck:
+  livenessPath: /health
+  readinessPath: /health/ready
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# Plain env vars, e.g.:
+# env:
+#   - name: LOG_LEVEL
+#     value: info
+env: []
+
+# Name of a pre-existing Secret to load every key from as env vars
+# (DATABASE_URL, SECRET_KEY, etc.) -- create it out-of-band, this chart
+# does not manage secret contents.
+envFromSecret: ""
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+# create: false (default) -- pods run as the namespace's "default"
+# ServiceAccount, same as before this key existed. Set create: true and add
+# an eks.amazonaws.com/role-arn annotation (the terraform/modules/irsa
+# role_arn output, from a real environment) to give this service's pods
+# scoped AWS permissions with no static credentials anywhere -- see
+# gitops/values/services/deployment-worker.yaml for the one real user of
+# this today.
+serviceAccount:
+  create: false
+  name: ""
+  annotations: {}
+
+# Off by default: this grants a ClusterRole/ClusterRoleBinding, not just
+# an IAM role -- IRSA (above) only ever grants AWS API permissions, this
+# is the separate, much more consequential grant of permissions against
+# the cluster's own Kubernetes API. See templates/clusterrole.yaml for
+# the full reasoning on exactly what it grants and why, and
+# gitops/values/services/deployment-worker.yaml for the one real user of
+# this today.
+clusterRbac:
+  enabled: false
+
+# "backend-service" for everything except the gateway itself, which
+# overrides this to "gateway" in gitops/values/services/gateway.yaml --
+# used only as the icop.io/component pod label (see _helpers.tpl's
+# podLabels), which templates/networkpolicy.yaml selects on. Doesn't
+# affect anything else about how a service runs.
+component: backend-service
+
+# Off by default in this base chart -- gitops/values/environments/*.yaml
+# turns this on for real (see that file). Off-by-default here means
+# someone using this chart standalone (`helm install` outside the
+# gitops/ flow entirely) gets today's actual behavior -- no ingress
+# restriction -- rather than a surprise 5xx from every service suddenly
+# being unreachable because a NetworkPolicy they didn't know existed
+# started enforcing.
+networkPolicy:
+  enabled: false
+  # Namespace kube-prometheus-stack's Prometheus runs in (see
+  # gitops/root/resources/observability.yaml) -- allowed to reach this
+  # pod's /metrics regardless of which icop-{env} namespace this
+  # release itself is in.
+  observabilityNamespace: observability
+
+# Unlike networkPolicy, safe to default on: a PodDisruptionBudget only
+# ever limits how aggressively Kubernetes can voluntarily evict this
+# service's pods (node drains, cluster-autoscaler scale-down) -- it
+# can't break connectivity or reject a real request the way a
+# misconfigured NetworkPolicy could, so there's no "surprise breakage"
+# risk from defaulting it on the way networkPolicy.enabled: false avoids.
+podDisruptionBudget:
+  enabled: true

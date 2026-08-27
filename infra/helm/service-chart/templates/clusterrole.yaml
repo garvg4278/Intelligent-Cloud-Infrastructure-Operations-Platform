@@ -1,0 +1,77 @@
+{{- if .Values.clusterRbac.enabled }}
+# ClusterRole, not a namespaced Role -- see gitops/values/services/
+# deployment-worker.yaml for the one real user of this today.
+# infrastructure-worker does NOT get this; see that service's own values
+# file for why not.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "service-chart.fullname" . }}
+  labels:
+    {{- include "service-chart.labels" . | nindent 4 }}
+rules:
+  # Why cluster-scoped at all: services/deployment/app/orchestrator.py's
+  # HelmOrchestrator runs `helm upgrade --install <release> <chart>
+  # --namespace <target> --create-namespace`, where <target> is
+  # services/deployment/app/executor.py's `deployment.environment.value`
+  # ("staging" / "production", literally) -- a DIFFERENT namespace than
+  # icop-staging/icop-production, which is where this worker's own pod
+  # runs. Creating a namespace is inherently cluster-scoped, and a Role
+  # bound in this release's own namespace has no way to grant permissions
+  # over a namespace that doesn't exist yet. Never "delete" below --
+  # nothing in HelmOrchestrator's actual interface (deploy /
+  # check_rollout_health / rollback, see orchestrator.py) ever removes a
+  # namespace.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create"]
+  # Full CRUD on exactly the resource kinds this same chart can itself
+  # render into a target release (see templates/deployment.yaml,
+  # service.yaml, serviceaccount.yaml, hpa.yaml, networkpolicy.yaml,
+  # poddisruptionbudget.yaml). Delete, not just create/update: a later
+  # chart revision that drops a resource an earlier one created relies on
+  # Helm being able to prune it on upgrade.
+  - apiGroups: [""]
+    resources: ["services", "serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Same full CRUD, for an unrelated reason: this is where Helm 3's
+  # default storage driver keeps release history itself
+  # (`sh.helm.release.v1.<name>.v<revision>` Secret objects) --
+  # `helm history` and `helm rollback` (both real HelmOrchestrator
+  # methods) read this, and `helm upgrade` writes it, regardless of what
+  # the target release's own chart contains.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Read-only, and deliberately not part of the CRUD block above: nothing
+  # in this worker's code creates or deletes a Pod/ReplicaSet directly
+  # (that's the Deployment controller's job, not this ServiceAccount's).
+  # `kubectl rollout status` reads a Deployment's own status conditions
+  # primarily, but these let someone debugging a stuck rollout actually
+  # see why (a crash-looping pod, a failed scheduling event).
+  - apiGroups: [""]
+    resources: ["pods", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+  # Deliberately absent: anything under rbac.authorization.k8s.io. A
+  # ServiceAccount that can grant RBAC permissions to itself or anything
+  # else is a privilege-escalation path with no justification anywhere in
+  # this worker's actual code. gitops/root/resources/project.yaml
+  # describes exactly this kind of resource as one that "would be
+  # flagged for review under this project" -- this file is that review;
+  # the answer for rbac.authorization.k8s.io specifically is no.
+{{- end }}

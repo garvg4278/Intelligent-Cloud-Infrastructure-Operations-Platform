@@ -1,0 +1,8 @@
+---
+baseline_timezone: UTC
+baseline_packages:
+  - chrony
+  - curl
+  - unzip
+  - tar
+  - jq

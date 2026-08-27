@@ -1,0 +1,7 @@
+{{ .Release.Name }} deployed ({{ .Values.image.repository }}:{{ .Values.image.tag }}).
+
+Check rollout status:
+  kubectl rollout status deployment/{{ include "service-chart.fullname" . }} -n {{ .Release.Namespace }}
+
+Port-forward to reach it locally:
+  kubectl port-forward svc/{{ include "service-chart.fullname" . }} 8080:{{ .Values.service.port }} -n {{ .Release.Namespace }}

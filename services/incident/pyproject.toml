@@ -1,0 +1,8 @@
+[tool.ruff]
+line-length = 110
+# See services/auth/pyproject.toml for why alembic/versions is excluded.
+exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "BLE"]
+ignore = ["B008"]  # see services/auth/pyproject.toml for why

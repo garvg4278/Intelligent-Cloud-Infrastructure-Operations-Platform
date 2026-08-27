@@ -1,0 +1,6 @@
+---
+- name: Install node-level monitoring agent
+  hosts: k8s_nodes
+  gather_facts: true
+  roles:
+    - node_exporter

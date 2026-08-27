@@ -1,0 +1,39 @@
+# Copy to inventory/aws_ec2.yml (that exact name -- ansible.cfg points at
+# it, and the amazon.aws.aws_ec2 plugin requires a filename ending in
+# aws_ec2.yml/aws_ec2.yaml to auto-detect). Not committed as the real
+# filename on purpose: the region/cluster-name below are per-environment,
+# same reasoning as terraform.tfvars.example never being the real
+# terraform.tfvars.
+plugin: amazon.aws.aws_ec2
+
+regions:
+  - us-east-1
+
+filters:
+  instance-state-name: running
+  # EKS stamps this tag onto every instance a managed node group launches
+  # -- see terraform/modules/eks/main.tf's aws_eks_node_group. Change the
+  # value for the environment you're targeting (icop-staging /
+  # icop-production).
+  "tag:eks:cluster-name": icop-staging
+
+# SSM addresses instances by instance-id, not by IP or DNS name -- these
+# nodes don't have a reachable IP from outside the VPC at all (no public
+# IP, no SSH), so "hostname" here really means "the identifier the
+# amazon.aws.aws_ssm connection plugin will hand to `aws ssm
+# start-session`", not a DNS name.
+hostnames:
+  - instance-id
+
+compose:
+  # Required by the aws_ssm connection plugin even when hostnames above
+  # already produced an instance-id -- ansible_host specifically has to be
+  # the instance ID for the plugin to know what to connect to.
+  ansible_host: instance_id
+
+groups:
+  k8s_nodes: "'eks:nodegroup-name' in tags"
+
+keyed_groups:
+  - key: tags['eks:nodegroup-name'] | default('untagged')
+    prefix: nodegroup

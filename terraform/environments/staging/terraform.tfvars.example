@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars and adjust. Every value here also has a working
+# default in variables.tf -- this file only needs to override what's
+# actually different for your account (region, AZ names that exist there,
+# instance sizes if t3/t4g aren't available/desired).
+
+aws_region = "us-east-1"
+azs        = ["us-east-1a", "us-east-1b"]

@@ -1,0 +1,12 @@
+---
+# Full post-provision run: everything Terraform doesn't (and, for the
+# managed-node-group parts, shouldn't) do itself. Called by the
+# `infrastructure` service's AnsibleOrchestrator
+# (services/infrastructure/app/ansible_orchestrator.py) after a Terraform
+# apply succeeds -- this is the "Ansible installs runtime dependencies" /
+# "Monitoring agents are installed" steps of the original design doc's
+# infrastructure workflow, run together as one playbook so a single
+# ansible-playbook invocation is what that orchestrator actually shells
+# out to.
+- import_playbook: baseline.yml
+- import_playbook: monitoring-agent.yml

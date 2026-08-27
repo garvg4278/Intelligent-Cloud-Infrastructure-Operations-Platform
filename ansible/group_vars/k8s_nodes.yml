@@ -1,0 +1,8 @@
+---
+# Group-specific overrides for the k8s_nodes group (every EKS-managed
+# node, per inventory/aws_ec2.yml.example's group definition). Currently
+# empty of overrides -- present so there's an obvious place to add
+# node-group-specific variables later (e.g. if a second, differently-sized
+# node group is added and needs a different node_exporter_version rollout
+# order) without having to introduce this file for the first time under
+# time pressure.

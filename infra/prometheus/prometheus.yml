@@ -1,0 +1,68 @@
+# Real scrape config -- every target below is a service that actually
+# exposes /metrics in this repo right now (services/*/app/middleware.py).
+# There is no target here for a service that doesn't emit real metrics.
+
+# Real scrape config -- every target below is a service that actually
+# exposes /metrics in this repo right now (services/*/app/middleware.py).
+# There is no target here for a service that doesn't emit real metrics.
+#
+# aiops/analytics/notification/audit were added to this file in the same
+# pass that added terraform/ansible/gitops -- they've had a working
+# MetricsMiddleware + /metrics endpoint since Phase 5 shipped, same as
+# gateway/auth/deployment/incident/alert below, but were never actually
+# added as scrape targets here. Confirmed each one really does expose
+# /metrics (grepped for MetricsMiddleware wiring in every service's
+# main.py) before adding it, rather than assuming from the service name --
+# the root README's "Prometheus scrapes /metrics from all nine services"
+# claim was aspirational until this fix; it's now accurate for all ten.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: gateway
+    static_configs:
+      - targets: ["gateway:8000"]
+
+  - job_name: auth
+    static_configs:
+      - targets: ["auth:8000"]
+
+  - job_name: deployment
+    static_configs:
+      - targets: ["deployment:8000"]
+
+  - job_name: incident
+    static_configs:
+      - targets: ["incident:8000"]
+
+  - job_name: alert
+    static_configs:
+      - targets: ["alert:8000"]
+
+  - job_name: aiops
+    static_configs:
+      - targets: ["aiops:8000"]
+
+  - job_name: analytics
+    static_configs:
+      - targets: ["analytics:8000"]
+
+  - job_name: notification
+    static_configs:
+      - targets: ["notification:8000"]
+
+  - job_name: audit
+    static_configs:
+      - targets: ["audit:8000"]
+
+  - job_name: infrastructure
+    static_configs:
+      - targets: ["infrastructure:8000"]
+
+  # Prometheus can always scrape itself -- useful for confirming the
+  # container is healthy independent of any ICOP service.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

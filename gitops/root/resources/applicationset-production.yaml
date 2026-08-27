@@ -1,0 +1,75 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: icop-services-production
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+
+  generators:
+    - list:
+        elements:
+          - service: gateway
+          - service: auth
+          - service: deployment
+          - service: deployment-worker
+          - service: incident
+          - service: alert
+          - service: alert-worker
+          - service: alert-beat
+          - service: aiops
+          - service: analytics
+          - service: notification
+          - service: notification-worker
+          - service: audit
+          - service: infrastructure
+          - service: infrastructure-worker
+
+  template:
+    metadata:
+      name: "icop-production-{{.service}}"
+      labels:
+        icop.io/environment: production
+        icop.io/service: "{{.service}}"
+    spec:
+      project: icop
+      sources:
+        - repoURL: https://github.com/YOUR_ORG/icop-platform.git
+          targetRevision: HEAD
+          path: infra/helm/service-chart
+          helm:
+            valueFiles:
+              - $values/gitops/values/environments/production.yaml
+              - $values/gitops/values/services/{{.service}}.yaml
+        - repoURL: https://github.com/YOUR_ORG/icop-platform.git
+          targetRevision: HEAD
+          ref: values
+      destination:
+        # NOT `https://kubernetes.default.svc` -- that shorthand always
+        # resolves to whichever cluster ArgoCD itself is running in, which
+        # this repo's bootstrap (see gitops/README.md) puts in the STAGING
+        # cluster. Production is a separate EKS cluster
+        # (terraform/environments/production), reached as a registered
+        # remote destination by the friendly name given to it at
+        # registration time:
+        #   argocd cluster add <production-kubeconfig-context> --name icop-production-cluster
+        # Using `destination.name` (a lookup against ArgoCD's registered
+        # clusters) instead of `destination.server` (a raw API endpoint
+        # URL) means this file doesn't need production's actual EKS API
+        # endpoint hardcoded into it -- that endpoint isn't even known
+        # until `terraform apply` has run against environments/production.
+        name: icop-production-cluster
+        namespace: icop-production
+      # Deliberately NO `syncPolicy.automated` block -- this is the one
+      # real difference from applicationset-staging.yaml, and it's the
+      # whole point of having two ApplicationSets instead of one matrixed
+      # over environments. A merge to the main branch reaches staging on
+      # its own; reaching production needs a human (or a gated CI step)
+      # to run `argocd app sync icop-production-<service>` after looking
+      # at what changed. Encoding "staging auto-deploys, production is a
+      # deliberate gate" as two resources with genuinely different specs
+      # is more honest than a single templated resource with a boolean
+      # flag pretending the two are the same policy.
+      syncOptions:
+        - CreateNamespace=true

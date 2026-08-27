@@ -1,0 +1,96 @@
+---
+# Installs node_exporter as a systemd service so host-level metrics (disk,
+# network, real memory pressure -- the things a container can only see a
+# cgroup-filtered view of) are available to scrape, complementing rather
+# than duplicating the pod-level metrics every ICOP service already
+# exposes via prometheus_client (see infra/prometheus/prometheus.yml and
+# each service's /metrics endpoint). This is the "7. Monitoring agents are
+# installed" step of the original design doc's infrastructure workflow
+# (ROADMAP.md's linked design doc, section 6.4).
+#
+# No new security group rule needed for Prometheus (running as a pod, via
+# the gitops/ observability stack) to reach port {{ node_exporter_port }}
+# on the node: EKS attaches its own cluster security group to every
+# managed-node-group instance automatically, and that security group's
+# default rule allows all traffic between anything wearing it -- which
+# covers pod-to-node-port traffic under the VPC CNI's default
+# configuration. See terraform/modules/eks/README (cluster_security_group_id
+# output) for where that SG comes from.
+
+- name: Create node_exporter system group
+  ansible.builtin.group:
+    name: "{{ node_exporter_user }}"
+    system: true
+
+- name: Create node_exporter system user
+  ansible.builtin.user:
+    name: "{{ node_exporter_user }}"
+    group: "{{ node_exporter_user }}"
+    system: true
+    shell: /sbin/nologin
+    create_home: false
+
+- name: Check for an already-installed node_exporter binary
+  ansible.builtin.stat:
+    path: "{{ node_exporter_install_dir }}/node_exporter"
+  register: existing_binary
+
+- name: Check installed version, if any
+  ansible.builtin.command: "{{ node_exporter_install_dir }}/node_exporter --version"
+  register: installed_version
+  changed_when: false
+  failed_when: false
+  when: existing_binary.stat.exists
+
+# node_exporter --version writes to stderr and its first line looks like:
+#   node_exporter, version 1.12.1 (branch: HEAD, revision: ...)
+- name: Download and install node_exporter
+  when: >
+    not existing_binary.stat.exists or
+    (node_exporter_version not in (installed_version.stderr | default('')))
+  block:
+    - name: Download node_exporter release tarball
+      ansible.builtin.get_url:
+        url: "{{ node_exporter_download_url }}"
+        dest: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
+        mode: "0644"
+
+    - name: Extract node_exporter tarball
+      ansible.builtin.unarchive:
+        src: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
+        dest: /tmp
+        remote_src: true
+
+    - name: Install node_exporter binary
+      ansible.builtin.copy:
+        src: "/tmp/node_exporter-{{ node_exporter_version }}.{{ node_exporter_arch }}/node_exporter"
+        dest: "{{ node_exporter_install_dir }}/node_exporter"
+        owner: root
+        group: root
+        mode: "0755"
+        remote_src: true
+      notify: restart node_exporter
+
+    - name: Clean up download artifacts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
+        - "/tmp/node_exporter-{{ node_exporter_version }}.{{ node_exporter_arch }}"
+
+- name: Install node_exporter systemd unit
+  ansible.builtin.template:
+    src: node_exporter.service.j2
+    dest: /etc/systemd/system/node_exporter.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart node_exporter
+
+- name: Ensure node_exporter is enabled and running
+  ansible.builtin.systemd:
+    name: node_exporter
+    enabled: true
+    state: started
+    daemon_reload: true

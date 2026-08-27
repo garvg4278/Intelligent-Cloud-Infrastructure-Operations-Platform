@@ -1,0 +1,29 @@
+# The one resource applied by hand (`kubectl apply -f gitops/root/root-app.yaml`)
+# after ArgoCD itself is installed -- everything else in gitops/root/resources/
+# (the AppProject, both ApplicationSets, the observability Application) is
+# then picked up and kept in sync by ArgoCD itself, "app of apps" style.
+# This is the only manifest in this whole gitops/ tree that a human runs
+# `kubectl apply` on directly; every other change from here on is a Git
+# commit.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: icop-root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/YOUR_ORG/icop-platform.git # see gitops/README.md
+    targetRevision: HEAD
+    path: gitops/root/resources
+    directory:
+      recurse: false # everything root-app.yaml should manage is flat inside resources/ on purpose -- see that directory's own file list
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

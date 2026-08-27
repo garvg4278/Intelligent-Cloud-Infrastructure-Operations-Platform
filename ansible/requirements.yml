@@ -1,0 +1,9 @@
+---
+# ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: amazon.aws
+    version: ">=8.0.0"   # provides the aws_ec2 inventory plugin and the aws_ssm connection plugin (community.aws.aws_ssm now redirects here)
+  - name: community.general
+    version: ">=9.0.0"   # community.general.timezone, misc utility modules used by roles/baseline
+  - name: ansible.posix
+    version: ">=1.5.0"   # ansible.posix.synchronize / systemd helpers used by roles/node_exporter

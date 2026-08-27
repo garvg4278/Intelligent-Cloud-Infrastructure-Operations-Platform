@@ -1,0 +1,76 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: icop
+  namespace: argocd
+spec:
+  description: >-
+    ICOP's own services and observability stack. Deliberately scoped
+    tighter than ArgoCD's "default" project: only this one repo, only the
+    resource kinds an ICOP service Application actually needs. Two
+    exceptions to that rule are whitelisted below (ClusterRole,
+    ClusterRoleBinding) -- both scoped to exactly one service
+    (deployment-worker) for a documented reason; see
+    infra/helm/service-chart/templates/clusterrole.yaml. The general rule
+    still holds for everything else -- a chart rendering a namespaced
+    Secret, say, or any other kind not listed below, would still be
+    flagged for review rather than silently allowed, which is the point
+    of a project boundary at all.
+
+  sourceRepos:
+    - "*" # tighten to this repo's real Git URL once it has one -- see gitops/README.md
+
+  destinations:
+    - namespace: icop-staging
+      server: https://kubernetes.default.svc
+    - namespace: observability
+      server: https://kubernetes.default.svc
+    - namespace: icop-production
+      name: icop-production-cluster
+
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    # deployment-worker only -- see infra/helm/service-chart/templates/
+    # clusterrole.yaml for exactly what these grant and why a
+    # cluster-scoped resource is genuinely necessary here, not just
+    # convenient. Everything else under rbac.authorization.k8s.io stays
+    # unlisted deliberately.
+    - group: "rbac.authorization.k8s.io"
+      kind: ClusterRole
+    - group: "rbac.authorization.k8s.io"
+      kind: ClusterRoleBinding
+
+  namespaceResourceWhitelist:
+    - group: "apps"
+      kind: Deployment
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ServiceAccount
+    - group: ""
+      kind: ConfigMap
+    - group: "autoscaling"
+      kind: HorizontalPodAutoscaler
+    # Both on by default for every service in both environments (see
+    # infra/helm/service-chart/values.yaml's podDisruptionBudget default,
+    # and gitops/values/environments/staging.yaml + production.yaml's
+    # networkPolicy override) -- without these two entries every single
+    # Application sync fails on "resource kind not permitted in project"
+    # for both kinds, every time.
+    - group: "networking.k8s.io"
+      kind: NetworkPolicy
+    - group: "policy"
+      kind: PodDisruptionBudget
+    # PrometheusRule/ServiceMonitor CRDs, for the observability stack's own
+    # Application (kube-prometheus-stack manages its own CRDs on install;
+    # this just allows this project to create instances of them).
+    - group: "monitoring.coreos.com"
+      kind: "*"
+
+  roles:
+    - name: readonly
+      description: Read-only access to every icop Application -- the shape a dashboard/CI-status-check credential would use, not something anything in this repo authenticates as yet.
+      policies:
+        - p, proj:icop:readonly, applications, get, icop/*, allow
+      groups: []

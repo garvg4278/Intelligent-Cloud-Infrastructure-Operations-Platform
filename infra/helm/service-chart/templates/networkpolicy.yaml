@@ -1,0 +1,50 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "service-chart.fullname" . }}
+  labels:
+    {{- include "service-chart.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "service-chart.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Same-namespace traffic, unrestricted by which specific pod it's
+    # from. Every real service-to-service call in this platform today
+    # (deployment -> audit, alert -> incident/notification, analytics ->
+    # deployment/incident/alert, aiops -> deployment/alert/incident,
+    # infrastructure -> audit, and the gateway -> everything) is
+    # intra-namespace -- an empty podSelector with no namespaceSelector
+    # sibling means "any pod in this policy's own namespace" under
+    # standard NetworkPolicy semantics, which is what makes that work
+    # without enumerating every relationship as its own rule.
+    #
+    # What this does NOT do: stop one backend service from reaching
+    # another it has no legitimate reason to talk to (e.g. nothing
+    # today stops notification's pods from reaching infrastructure's
+    # DB-touching routes at the network layer -- only the gateway's own
+    # routing normally sends traffic there). That's a real, deliberate
+    # scope limit, not an oversight -- true per-service-pair isolation
+    # needs either a much larger set of individual NetworkPolicy rules
+    # or a service mesh's mTLS+authz layer, and this platform has
+    # neither. This policy's actual job is the boundary that matters
+    # most: nothing OUTSIDE this namespace (or the observability
+    # namespace, below) can reach in at all.
+    - from:
+        - podSelector: {}
+    # Prometheus (kube-prometheus-stack, deployed into its own
+    # namespace by gitops/root/resources/observability.yaml) needs to
+    # reach every pod's /metrics -- allowed by namespace rather than by
+    # pod label, since that chart isn't this one and its pods don't
+    # carry this chart's labels. kubernetes.io/metadata.name is a
+    # built-in label every namespace has carried automatically since
+    # Kubernetes 1.21 (its own name) -- not something this chart or
+    # gitops/ has to separately create or maintain.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.observabilityNamespace }}
+{{- end }}
