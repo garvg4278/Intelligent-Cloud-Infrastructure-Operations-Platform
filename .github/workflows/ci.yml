@@ -45,7 +45,7 @@ jobs:
           - audit
           - infrastructure
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -65,7 +65,7 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -83,7 +83,7 @@ jobs:
     name: frontend (lint, test, audit, build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v4
         with:
@@ -141,7 +141,7 @@ jobs:
           - audit
           - infrastructure
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build image
         run: docker build -t icop-${{ matrix.service }}:ci services/${{ matrix.service }}
@@ -166,7 +166,7 @@ jobs:
     name: dependency audit (pip-audit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -190,7 +190,7 @@ jobs:
     name: secret scan (trivy fs)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Scan repository for secrets
         uses: aquasecurity/trivy-action@0.28.0
@@ -207,7 +207,7 @@ jobs:
     name: helm lint + template
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: azure/setup-helm@v4
 
@@ -238,7 +238,7 @@ jobs:
     name: validate terraform + ansible
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: hashicorp/setup-terraform@v3
 
@@ -299,7 +299,7 @@ jobs:
           - audit
           - infrastructure
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: docker/login-action@v3
         with:
