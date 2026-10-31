@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 # kubectl and helm so HelmOrchestrator's subprocess calls have something to
 # actually invoke. Installed from each project's official method. This
