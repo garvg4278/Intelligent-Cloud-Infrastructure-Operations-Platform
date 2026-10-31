@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 # Everything TerraformCLI, AnsibleRunner, and (for post-provision sanity
 # checks) kubectl/helm shell out to. This image alone isn't enough to
