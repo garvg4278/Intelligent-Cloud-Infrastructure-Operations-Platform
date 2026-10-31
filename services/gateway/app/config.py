@@ -1,15 +1,25 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+INSECURE_DEFAULT_SECRET = "dev-secret-change-me"
+MIN_SECRET_BYTES = 32
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    # "local" (docker-compose, tests) tolerates the dev secret; anything else
+    # -- including the unset default -- refuses to start with it. Secure by
+    # default: a real deployment that forgets to set SECRET_KEY crashes at
+    # boot instead of silently accepting tokens anyone can forge.
+    ICOP_ENV: str = "production"
 
     # Same default as services/auth/app/config.py on purpose -- both must
     # agree on this value (real deployments set the same SECRET_KEY env
     # var for both, see docker-compose.yml) for the gateway's local JWT
     # verification (see app/security.py) to accept tokens auth actually
     # issued.
-    SECRET_KEY: str = "dev-secret-change-me"
+    SECRET_KEY: str = INSECURE_DEFAULT_SECRET
     AUTH_SERVICE_URL: str = "http://localhost:8001"
     DEPLOYMENT_SERVICE_URL: str = "http://localhost:8002"
     INCIDENT_SERVICE_URL: str = "http://localhost:8003"
@@ -50,6 +60,20 @@ class Settings(BaseSettings):
     # misconfiguration browsers themselves refuse to honor for good
     # reason, so this setting only ever produces an explicit list.
     CORS_ALLOWED_ORIGINS: str = ""
+    UPSTREAM_TIMEOUT_SECONDS: float = 10.0
+    AI_UPSTREAM_TIMEOUT_SECONDS: float = 180.0
+
+    @model_validator(mode="after")
+    def _reject_weak_secret_outside_local(self):
+        if self.ICOP_ENV != "local" and (
+            self.SECRET_KEY == INSECURE_DEFAULT_SECRET or len(self.SECRET_KEY.encode()) < MIN_SECRET_BYTES
+        ):
+            raise ValueError(
+                "SECRET_KEY must be set to a random value of at least 32 bytes "
+                "(e.g. `openssl rand -hex 32`); the built-in dev default is only "
+                "accepted when ICOP_ENV=local"
+            )
+        return self
 
 
 settings = Settings()

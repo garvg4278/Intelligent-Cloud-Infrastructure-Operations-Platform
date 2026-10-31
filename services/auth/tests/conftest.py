@@ -1,4 +1,10 @@
+import os
+
 import pytest
+
+# Before `app.config` is imported: Settings() refuses the dev secret unless local.
+os.environ.setdefault("ICOP_ENV", "local")
+
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker

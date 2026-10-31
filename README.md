@@ -5,11 +5,14 @@ deployment automation, observability, incident management, AI-assisted
 analysis, analytics, notifications, and audit logging under one platform.
 
 The browser-facing **Operations Console** is available at
-http://localhost:8080 after startup. It provides account registration/sign-in,
-live overview data, incident and alert visibility, audited environment
-provisioning controls, and direct links to API docs and Grafana. It uses a
-same-origin reverse proxy to the gateway; it does not bypass the platform's
-JWT authentication.
+http://localhost:8080 after startup. It provides sign-in/registration, live
+reliability numbers per service, incidents (with state transitions), alerts
+(with acknowledgement), environment provisioning and teardown behind
+confirmation dialogs, the audit log, and user/role management. Navigation and
+controls follow the caller's role; the gateway still enforces it. It is
+responsive down to 320px, has light/dark themes, a command palette (Ctrl/Cmd+K),
+and is served by nginx with a strict CSP through a same-origin proxy to the
+gateway. See [frontend/README.md](frontend/README.md).
 
 **Status: Phase 5 (Breadth) complete — all ten services built and wired,
 plus Terraform/Ansible/GitOps for real cloud provisioning. Phase 6's
@@ -23,7 +26,15 @@ against a real Kubernetes cluster, a real Prometheus/Grafana instance, a
 real (authenticated) LLM call, a real AWS account, or real production
 traffic yet (read the caveats before trusting those paths blindly).
 Nothing else in this README is aspirational — if it's described here, it
-runs and is tested. **315 tests passing across ten services.**
+runs and is tested. **472 tests passing: 427 across the ten services, 45 in the console.**
+
+**Phase 8 (security hardening) is done on top of that:** role-based
+authorization at the gateway, a startup guard against weak/default JWT
+secrets, Helm-argument injection, path-traversal, header-spoofing and SSRF
+fixes, pagination that no longer silently truncates analytics, non-root
+containers with a restricted pod security context, and dependency/secret/chart
+checks in CI. The full list, including what is still open, is in
+[ROADMAP.md](ROADMAP.md)'s Phase 8.
 
 ## What's actually running right now
 
@@ -155,13 +166,17 @@ passes.
 
 ```bash
 cp .env.example .env
+# Edit .env: set BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD (>= 8 chars
+# with the usual password rules). Registration only creates read-only
+# `viewer` accounts, so without a bootstrap admin you cannot create alert rules,
+# trigger deployments, etc.
 docker compose up --build
 ```
 
 On PowerShell, use:
 
 ```powershell
-Copy-Item .env.example .env
+Copy-Item .env.example .env   # then set BOOTSTRAP_ADMIN_EMAIL / _PASSWORD in it
 docker compose up --build
 ```
 
@@ -171,7 +186,14 @@ docker compose up --build
   AI Ops: :8005 · Analytics: :8006 · Notification: :8007 · Audit: :8008 ·
   Infrastructure: :8009
 - Prometheus: http://localhost:9090 (check **Status → Targets** — all 11 targets, the ten APIs plus Prometheus itself, should be UP)
-- Grafana: http://localhost:3000 (`admin`/`admin`, dashboard auto-loaded)
+- Grafana: http://localhost:3000 (`admin` / `GRAFANA_ADMIN_PASSWORD`, default
+  `admin` — anonymous access is off; dashboard auto-loaded)
+
+Every published port is bound to `127.0.0.1`, so the stack is reachable from
+your machine only. Compose runs with `ICOP_ENV=local`, the one setting that lets
+the built-in dev `SECRET_KEY` through. For anything shared, set `ICOP_ENV=production`
+and a real `SECRET_KEY` (>= 32 bytes) — the auth and gateway services refuse to
+start otherwise.
 
 The deployment worker needs a real cluster to do anything past "accepted
 the request" (mount a kubeconfig in `docker-compose.yml`). The
@@ -186,12 +208,11 @@ or it fails cleanly at `terraform init` with the real error recorded (see
 ## Try it: alert fires → incident opens → ask AI Ops → check analytics
 
 ```bash
-# 1. Register + log in
-curl -X POST http://localhost:8000/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email": "you@example.com", "password": "supersecret1"}'
+# 1. Log in as the bootstrap admin you set in .env. (A freshly registered user via
+#    POST /api/v1/auth/register is a read-only `viewer`; an admin can promote
+#    them with PATCH /api/v1/auth/users/{id}/role.)
 TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
-  -d "username=you@example.com&password=supersecret1" | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+  -d "username=$BOOTSTRAP_ADMIN_EMAIL&password=$BOOTSTRAP_ADMIN_PASSWORD" | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
 AUTH="Authorization: Bearer $TOKEN"
 # Every call from here on needs -H "$AUTH" -- register/login/refresh are
 # the only three routes that don't (see services/gateway/app/security.py).
@@ -372,12 +393,15 @@ icop-platform/
 - **AI Ops only implements Anthropic**; **notification only implements
   webhook + SMTP email** — both behind a `Protocol`, so a new provider or
   channel is one new implementation, not a rewrite.
-- **Authentication is enforced (Phase 6); fine-grained authorization is
-  not.** The gateway verifies every request has a valid token — it does
-  not, and was never meant to, check whether the specific caller is
-  allowed to do the specific thing they're asking for (deploy this
-  service, provision this environment). That's each downstream service's
-  own unbuilt concern; today every valid token can call everything.
+- **Authorization is role-based and coarse (Phase 8).** The gateway maps each
+  service to a minimum role for reads and for writes (`viewer < developer <
+  operator < admin`; see `POLICY` in `services/gateway/app/security.py`) — e.g.
+  deployments need `operator`, infrastructure writes need `admin`, the audit log
+  is readable by `operator`+ and not writable through the gateway at all. It is
+  not per-resource: there are no teams, tenants or "owner of this service"
+  rules, so an `operator` can act on every deployment and incident. Roles
+  are read from the JWT, so a demotion takes effect when the caller's access
+  token expires (at most `ACCESS_TOKEN_EXPIRE_MINUTES`), not instantly.
 - **NetworkPolicy segmentation is namespace-level, ingress-only.** Traffic
   from outside an `icop-{env}` namespace (or the observability namespace)
   is blocked; traffic between two services that have no legitimate reason

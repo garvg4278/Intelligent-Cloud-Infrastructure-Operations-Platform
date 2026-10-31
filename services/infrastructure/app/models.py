@@ -1,6 +1,6 @@
 import enum
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Column, DateTime, String
 from sqlalchemy import Enum as SAEnum
@@ -25,7 +25,7 @@ class EnvironmentStatus(str, enum.Enum):
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Environment(Base):
@@ -42,7 +42,9 @@ class Environment(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String(255), nullable=False, unique=True, index=True)
-    environment_type = Column(SAEnum(EnvironmentType, native_enum=False, length=32), nullable=False, index=True)
+    environment_type = Column(
+        SAEnum(EnvironmentType, native_enum=False, length=32), nullable=False, index=True
+    )
     status = Column(
         SAEnum(EnvironmentStatus, native_enum=False, length=32),
         nullable=False,

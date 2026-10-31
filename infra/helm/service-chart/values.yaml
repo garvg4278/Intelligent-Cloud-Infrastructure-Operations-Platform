@@ -125,3 +125,37 @@ networkPolicy:
 # risk from defaulting it on the way networkPolicy.enabled: false avoids.
 podDisruptionBudget:
   enabled: true
+
+# ---- Pod hardening (Phase 8) ------------------------------------------
+# Defaults match the eight services whose Dockerfiles create the unprivileged
+# `icop` user (UID 10001) and write nothing outside /tmp. They satisfy the
+# "restricted" Pod Security Standard.
+#
+# Overridden to relaxed values in gitops/values/services/{deployment,
+# deployment-worker,infrastructure,infrastructure-worker}.yaml: those images
+# still run as root because they shell out to helm/kubectl/terraform/
+# ansible, which write caches and state under $HOME and the working directory.
+# Making those four non-root needs testing against a real cluster/AWS account,
+# so it is tracked in ROADMAP.md rather than guessed at here.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# A read-only root filesystem needs somewhere writable; Celery beat's schedule
+# file and any tempfile go here.
+tmpVolume:
+  enabled: true
+  sizeLimit: 64Mi
+
+# Nothing in a typical ICOP pod talks to the Kubernetes API, so do not hand it
+# a token. deployment-worker (clusterRbac) turns this back on. IRSA is
+# unaffected: EKS injects its own projected web-identity token regardless.
+automountServiceAccountToken: false

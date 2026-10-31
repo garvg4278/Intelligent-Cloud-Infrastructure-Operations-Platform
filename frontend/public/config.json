@@ -1,0 +1,6 @@
+{
+  "environmentLabel": "local",
+  "grafanaUrl": "http://localhost:3000",
+  "apiDocsUrl": "http://localhost:8000/docs",
+  "supportEmail": ""
+}

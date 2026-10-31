@@ -89,3 +89,31 @@ def test_prometheus_client_raises_on_empty_result():
         pytest.raises(ServiceClientError, match="no data"),
     ):
         client.query("nonexistent_metric")
+
+
+def test_alert_client_asks_server_to_filter_by_service_so_quiet_services_are_not_buried():
+    """Regression: it used to fetch the newest 50 alerts of ALL services and
+    filter locally, so the agent reported 'no alerts' for a service whose
+    alerts were older than 50 other services' alerts."""
+    client = HttpAlertClient("http://alert:8000")
+    rules = MagicMock(json=lambda: [{"id": "rule-1"}])
+    rules.raise_for_status = lambda: None
+    alerts = MagicMock(json=lambda: [{"id": "a1", "rule_id": "rule-1"}])
+    alerts.raise_for_status = lambda: None
+
+    with patch("app.service_clients.httpx.get", side_effect=[rules, alerts]) as mock_get:
+        result = client.recent_alerts("quiet-service")
+
+    assert [a["id"] for a in result] == ["a1"]
+    alert_call = mock_get.call_args_list[1]
+    assert alert_call[0][0].endswith("/alerts")
+    assert alert_call[1]["params"]["service_name"] == "quiet-service"
+
+
+def test_recent_clients_request_only_what_they_use():
+    client = HttpDeploymentClient("http://deployment:8000")
+    fake = MagicMock(json=lambda: [{"id": "d1"}])
+    fake.raise_for_status = lambda: None
+    with patch("app.service_clients.httpx.get", return_value=fake) as mock_get:
+        client.recent_deployments("auth")
+    assert mock_get.call_args[1]["params"]["limit"] == 5

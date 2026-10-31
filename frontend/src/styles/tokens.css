@@ -1,0 +1,59 @@
+/* Design tokens. Every colour in the app comes from here; dark mode only redefines them. */
+:root {
+  --font: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --bg: #f4f6fa;
+  --surface: #ffffff;
+  --surface-2: #eef2f8;
+  --text: #152033;
+  --muted: #55657c;
+  --border: #d9e1ec;
+  --primary: #1556c0;
+  --primary-hover: #0f449b;
+  --on-primary: #ffffff;
+  --danger: #b42318;
+  --danger-hover: #912018;
+  --focus: #1556c0;
+
+  --good-bg: #dcf5e9; --good-fg: #0b6b4a;
+  --bad-bg: #fde4e1; --bad-fg: #a3261b;
+  --warn-bg: #fff1cf; --warn-fg: #7a5200;
+  --info-bg: #deebff; --info-fg: #1b4f9a;
+  --neutral-bg: #e8edf4; --neutral-fg: #46566c;
+
+  --sidebar-bg: #0c1a2e;
+  --sidebar-fg: #b8c7dc;
+  --sidebar-active: #17304f;
+
+  --shadow: 0 1px 2px rgba(16, 32, 56, 0.06), 0 4px 14px rgba(16, 32, 56, 0.05);
+  --radius: 10px;
+  --topbar-h: 56px;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0a111d;
+  --surface: #111b2c;
+  --surface-2: #17233a;
+  --text: #e6edf7;
+  --muted: #9fb0c7;
+  --border: #25344b;
+  --primary: #6aa5ff;
+  --primary-hover: #8dbaff;
+  --on-primary: #06111f;
+  --danger: #ff7b6f;
+  --danger-hover: #ff9a90;
+  --focus: #8dbaff;
+
+  --good-bg: #0f3a2b; --good-fg: #77e0b4;
+  --bad-bg: #44181a; --bad-fg: #ff9c92;
+  --warn-bg: #3d2f0b; --warn-fg: #f5cb6a;
+  --info-bg: #12294d; --info-fg: #9cc4ff;
+  --neutral-bg: #1d2b42; --neutral-fg: #b3c2d8;
+
+  --sidebar-bg: #070d17;
+  --sidebar-active: #15263f;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  color-scheme: dark;
+}

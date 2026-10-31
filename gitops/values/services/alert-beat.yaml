@@ -17,7 +17,7 @@ envFromSecret: icop-alert-secrets
 
 workload:
   type: worker
-  command: ["celery", "-A", "app.tasks", "beat", "--loglevel=info"]
+  command: ["celery", "-A", "app.tasks", "beat", "--loglevel=info", "-s", "/tmp/celerybeat-schedule"]
 
 # Exactly one replica, always -- see this file's own note above for why.
 # Overrides whatever values/environments/{staging,production}.yaml set,

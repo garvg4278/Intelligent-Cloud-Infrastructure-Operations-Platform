@@ -37,7 +37,10 @@ Fifteen real call sites across five services:
 | Service        | Action                          | When                                                    |
 |----------------|----------------------------------|--------------------------------------------------------------|
 | auth           | `user.registered`                | successful `POST /auth/register`                              |
-| auth           | `user.login`                     | successful `POST /auth/login` (not failed attempts)            |
+| auth           | `user.login_failed`              | failed login against an EXISTING account (unknown emails are only counted in `auth_login_failures_total`, so the append-only trail can't be filled with junk) |
+| auth           | `user.role_changed`              | `PATCH /auth/users/{id}/role` (actor = the admin)              |
+| auth           | `user.bootstrap_admin_created`   | first-admin bootstrap at startup                               |
+| auth           | `user.login`                     | successful `POST /auth/login`                                  |
 | deployment     | `deployment.triggered`           | every `POST /deployments`                                      |
 | deployment     | `deployment.succeeded`           | health check passes after deploy                                |
 | deployment     | `deployment.failed`              | deploy fails, or rollback itself also fails, or an unexpected error |

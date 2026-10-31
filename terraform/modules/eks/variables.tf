@@ -5,8 +5,8 @@ variable "name_prefix" {
 
 variable "cluster_version" {
   type        = string
-  description = "Kubernetes minor version. 1.33 is used as the default here as a deliberately conservative pick (in EKS's standard support window without being the newest, least-battle-tested release) -- 1.34/1.35/1.36 are all valid as of writing if you want newer."
-  default     = "1.33"
+  description = "Kubernetes minor version. Default 1.36: 1.33 left EKS standard support on 29 Jul 2026 (extended support is billed at a premium); 1.34-1.37 are in standard support. Re-check endoflife.date/amazon-eks before bumping, and upgrade one minor at a time."
+  default     = "1.36"
 }
 
 variable "vpc_id" {

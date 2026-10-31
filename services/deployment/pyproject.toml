@@ -9,4 +9,7 @@ ignore = [
     # See services/auth/pyproject.toml -- same reasoning, FastAPI's
     # Depends(...) pattern in argument defaults is the framework's real API.
     "B008",
+    # StrEnum changes str(member) from "Role.admin" to "admin"; these enums back
+    # database columns and API payloads, so a style rule is not worth that risk.
+    "UP042",
 ]

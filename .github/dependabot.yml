@@ -1,0 +1,136 @@
+# Keeps pinned dependencies, base images and CI actions from silently going stale.
+# Security updates arrive regardless of this file's schedule; these are the
+# routine version bumps. Grouped so you get one PR per ecosystem per week, not 40.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: {interval: weekly}
+    groups:
+      frontend:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule: {interval: weekly}
+
+  - package-ecosystem: terraform
+    directories:
+      - /terraform/environments/staging
+      - /terraform/environments/production
+      - /terraform/bootstrap
+    schedule: {interval: weekly}
+
+  - package-ecosystem: pip
+    directory: /services/aiops
+    schedule: {interval: weekly}
+    groups:
+      python-aiops:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /services/aiops
+    schedule: {interval: weekly}
+
+  - package-ecosystem: pip
+    directory: /services/alert
+    schedule: {interval: weekly}
+    groups:
+      python-alert:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /services/alert
+    schedule: {interval: weekly}
+
+  - package-ecosystem: pip
+    directory: /services/analytics
+    schedule: {interval: weekly}
+    groups:
+      python-analytics:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /services/analytics
+    schedule: {interval: weekly}
+
+  - package-ecosystem: pip
+    directory: /services/audit
+    schedule: {interval: weekly}
+    groups:
+      python-audit:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /services/audit
+    schedule: {interval: weekly}
+
+  - package-ecosystem: pip
+    directory: /services/auth
+    schedule: {interval: weekly}
+    groups:
+      python-auth:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /services/auth
+    schedule: {interval: weekly}
+
+  - package-ecosystem: pip
+    directory: /services/deployment
+    schedule: {interval: weekly}
+    groups:
+      python-deployment:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /services/deployment
+    schedule: {interval: weekly}
+
+  - package-ecosystem: pip
+    directory: /services/gateway
+    schedule: {interval: weekly}
+    groups:
+      python-gateway:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /services/gateway
+    schedule: {interval: weekly}
+
+  - package-ecosystem: pip
+    directory: /services/incident
+    schedule: {interval: weekly}
+    groups:
+      python-incident:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /services/incident
+    schedule: {interval: weekly}
+
+  - package-ecosystem: pip
+    directory: /services/infrastructure
+    schedule: {interval: weekly}
+    groups:
+      python-infrastructure:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /services/infrastructure
+    schedule: {interval: weekly}
+
+  - package-ecosystem: pip
+    directory: /services/notification
+    schedule: {interval: weekly}
+    groups:
+      python-notification:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /services/notification
+    schedule: {interval: weekly}

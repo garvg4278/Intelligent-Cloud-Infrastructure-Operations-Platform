@@ -39,6 +39,34 @@ from fastapi import HTTPException, Request, status
 
 from .config import settings
 
+# Role ladder: a higher number can do everything a lower one can.
+ROLE_RANK = {"viewer": 0, "developer": 1, "operator": 2, "admin": 3}
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+# service -> (minimum role for read-only methods, minimum role for anything
+# that changes state). `None` means "nobody, through the gateway" -- used for
+# analytics (computed, never written) and audit (events are written by the
+# services themselves over the internal network, never by an API caller:
+# letting any logged-in user POST /audit/events would make the "immutable
+# audit trail" forgeable). A service missing from this table is admin-only,
+# i.e. a newly proxied service fails closed until someone decides its policy.
+#
+# The auth service is deliberately permissive here -- it enforces its own,
+# finer-grained rules (/auth/users and the role-change endpoint are
+# admin-only inside auth itself).
+POLICY: dict[str, tuple[str, str | None]] = {
+    "auth": ("viewer", "viewer"),
+    "deployments": ("viewer", "operator"),
+    "alerts": ("viewer", "operator"),
+    "incidents": ("viewer", "operator"),
+    "ai": ("viewer", "developer"),
+    "analytics": ("viewer", None),
+    "notifications": ("viewer", "operator"),
+    "audit": ("operator", None),
+    "infrastructure": ("operator", "admin"),
+    "monitoring": ("viewer", "viewer"),  # 501 stub today
+}
+
 # Requesting a token requires not having one yet -- these three are the
 # only routes under /api/v1/* that skip verification. Exact-match on the
 # resolved path, not a prefix rule: /api/v1/auth/me and /api/v1/auth/users
@@ -66,7 +94,15 @@ async def enforce_authentication(request: Request) -> None:
         )
 
     try:
-        claims = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        # `require` closes a real hole: PyJWT only validates `exp` IF it is
+        # present, so a token signed with the right key but carrying no `exp`
+        # at all was accepted forever.
+        claims = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=["HS256"],
+            options={"require": ["exp", "sub", "type"]},
+        )
     except jwt.PyJWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -89,4 +125,31 @@ async def enforce_authentication(request: Request) -> None:
     # consumes them yet (see the root README), but establishing "who is
     # this, verified" belongs at the platform's one real trust boundary
     # regardless of whether every downstream service reads it today.
+    _authorize(request, claims)
     request.state.jwt_claims = claims
+
+
+def _authorize(request: Request, claims: dict) -> None:
+    """Role-based access check, run after the token itself is verified.
+
+    Role comes from the token, so a role change takes effect when the user's
+    current access token expires (<= ACCESS_TOKEN_EXPIRE_MINUTES), not
+    instantly -- there is no revocation list yet (see ROADMAP.md).
+    """
+    parts = request.url.path.split("/")  # ["", "api", "v1", <service>, ...]
+    service = parts[3] if len(parts) > 3 else ""
+    read_role, write_role = POLICY.get(service, ("admin", "admin"))
+    required = read_role if request.method in SAFE_METHODS else write_role
+
+    if required is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"{request.method} is not permitted on '{service}' through the gateway",
+        )
+
+    caller_rank = ROLE_RANK.get(str(claims.get("role", "")))
+    if caller_rank is None or caller_rank < ROLE_RANK[required]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"role '{claims.get('role')}' cannot {request.method} '{service}' (requires '{required}')",
+        )

@@ -1,0 +1,11 @@
+@media print {
+  :root, :root[data-theme="dark"] { --bg: #fff; --surface: #fff; --surface-2: #f2f2f2; --text: #000; --muted: #333; --border: #999; }
+  body { background: #fff; color: #000; font-size: 11pt; overflow: visible; }
+  .sidebar, .topbar, .scroll-progress, .back-to-top, .toaster, .skip-link, .page-actions, .toolbar, .load-more, .modal-backdrop, .site-footer nav, .icon-btn, .btn { display: none !important; }
+  .shell { display: block; }
+  .content { max-width: none; padding: 0; }
+  .panel, .stat-card, .table { box-shadow: none; border-color: #999; }
+  .table, .table tr { break-inside: avoid; }
+  a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 0.85em; word-break: break-all; }
+  .badge { border: 1px solid #666; background: none !important; color: #000 !important; }
+}

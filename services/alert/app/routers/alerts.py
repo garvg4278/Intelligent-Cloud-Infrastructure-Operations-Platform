@@ -64,11 +64,14 @@ def evaluate_all_now():
 def list_alerts(
     status_filter: AlertStatus | None = None,
     severity: AlertSeverity | None = None,
+    service_name: str | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
-    return crud.list_alerts(db, status=status_filter, severity=severity, limit=limit, offset=offset)
+    return crud.list_alerts(
+        db, status=status_filter, severity=severity, service_name=service_name, limit=limit, offset=offset
+    )
 
 
 @router.get("/{alert_id}", response_model=schemas.AlertOut)

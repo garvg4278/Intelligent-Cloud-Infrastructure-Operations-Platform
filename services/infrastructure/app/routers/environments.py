@@ -65,7 +65,9 @@ def list_environments(environment_type: EnvironmentType | None = None, db: Sessi
     return crud.list_environments(db, environment_type=environment_type)
 
 
-@router.delete("/{environment_id}", response_model=schemas.EnvironmentOut, status_code=status.HTTP_202_ACCEPTED)
+@router.delete(
+    "/{environment_id}", response_model=schemas.EnvironmentOut, status_code=status.HTTP_202_ACCEPTED
+)
 def destroy_environment(environment_id: str, db: Session = Depends(get_db)):
     environment = crud.get_environment(db, environment_id)
     if environment is None:

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .models import NotificationChannel, NotificationStatus
 
@@ -13,6 +13,17 @@ class NotificationCreate(BaseModel):
     # Flat key -> value substitutions for {{key}} placeholders in subject/body.
     context: dict[str, str] = {}
     max_attempts: int = Field(default=3, ge=1, le=10)
+
+    @field_validator("target", "subject")
+    @classmethod
+    def _no_header_injection(cls, value: str) -> str:
+        # These become SMTP headers (To:/Subject:). A CR/LF lets a caller add
+        # their own headers (Bcc: ...) -- and Python's MIME layer refuses to
+        # serialise such a message, which used to leave the notification
+        # stuck in "pending" forever instead of failing.
+        if "\r" in value or "\n" in value:
+            raise ValueError("must not contain line breaks")
+        return value
 
 
 class NotificationOut(BaseModel):

@@ -687,6 +687,116 @@ name left on it. That's deliberate: an honest 501 is worth more than a
 route that returns fabricated data, and worth more than hiding the
 endpoint entirely.
 
+## Phase 8 — Security hardening (from an adversarial review of the repo)
+
+An outside-in review (senior full-stack + DevSecOps lens) found that the
+platform's controls were mostly written but not enforced. Every item below
+was reproduced with a proof-of-concept against the repo's own code before
+being fixed, and every fix has a regression test that was confirmed to fail on
+the old code. **427 tests pass across the ten services** (31 aiops + 42 alert
++ 32 analytics + 21 audit + 46 auth + 55 deployment + 86 gateway + 24 incident
++ 34 infrastructure + 56 notification), `ruff check` is clean, and
+`pip-audit` reports no known vulnerabilities in any pinned requirements file.
+
+### Fixed
+
+| Area | Problem | Fix |
+|---|---|---|
+| Authorization | Any valid token — including a self-registered one — could call every route, e.g. provision cloud infrastructure | Role ladder enforced at the gateway (`POLICY`); `PATCH /auth/users/{id}/role` (admin-only, cannot self-demote); first admin via `BOOTSTRAP_ADMIN_*` |
+| JWT | Built-in dev secret accepted anywhere; tokens with no `exp` accepted | Startup refuses weak/default `SECRET_KEY` unless `ICOP_ENV=local`; `exp`, `sub`, `type` are required claims |
+| Helm | `image_tag` went into a `--set` argument, so a comma smuggled extra assignments (`image.repository=...`) | Tag is validated against a strict pattern *and* values are passed via a temp values file, not `--set` |
+| Gateway | Client-supplied `X-ICOP-User`/`X-ICOP-Role` reached upstreams on public paths; `%2f`/`..` escaped the service prefix; AI route shared a 10 s timeout | All `X-ICOP-*` stripped from inbound requests; decoded-path traversal rejected and path re-quoted; per-route timeouts (AI route configurable) |
+| Audit | Anyone reaching the audit service could forge events via POST | Gateway makes the audit route read-only and `operator`+ |
+| Analytics / AI Ops | Called list endpoints without paging, so statistics were computed from the newest 50 rows | Client-side paging (200/page, bounded) in analytics; AI Ops asks for what it uses; alerts gain a `service_name` filter |
+| Auth | >72-byte passwords crashed bcrypt (HTTP 500); emails were case-sensitive; no login-failure signal | UTF-8-byte-aware limit; emails normalised; `auth_login_failures_total{reason}` counter, and failed logins against *real* accounts are audited (unknown emails are counted but deliberately not written to the append-only table, so an attacker can't fill it) |
+| Notification | Webhooks could target internal addresses (SSRF); SMTP STARTTLS did not verify certificates; CR/LF in subject/recipients | `ip.is_global` guard (opt-out: `WEBHOOK_ALLOW_PRIVATE_TARGETS`); verified TLS context; header-injection validators; generic-exception safety net so a bad send can't wedge a job |
+| Containers | All images ran as root | Eight service images run as UID 10001; `.dockerignore` added |
+| Kubernetes | No pod security context; service-account token mounted everywhere | Chart defaults: `runAsNonRoot`, read-only root fs, `drop: [ALL]`, seccomp `RuntimeDefault`, `automountServiceAccountToken: false` (re-enabled only on `deployment-worker`) |
+| Compose | Every port published on all interfaces; Grafana anonymous access on | Ports bound to `127.0.0.1`; anonymous off; `ICOP_ENV`/bootstrap admin wired |
+| Versions | EKS default 1.33 had left standard support (29 Jul 2026); Terraform floor 1.9 | Default 1.36; `required_version >= 1.10.0` |
+| CI | Default token permissions; unpinned lint tool; no dependency, secret or chart checks; no image publishing | `permissions: contents: read`, pinned `ruff`, `pip-audit`, Trivy secret scan, real `helm lint` + `helm template` over every values file, GHCR publish on `main`, `dependabot.yml` |
+
+### Still open (deliberately, with the reason)
+
+- **`deployment`, `deployment-worker`, `infrastructure`, `infrastructure-worker` still run as root** with a writable root filesystem (explicit overrides in `gitops/values/services/`). They shell out to helm/kubectl/terraform/ansible, which write under `$HOME` and the working directory; making them non-root has to be tested against a real cluster and AWS account.
+- **`prom/prometheus:v2.55.1`, `grafana/grafana:11.1.0` and `nginx:1.27-alpine` are past their support windows** (as of Oct 2026, upstream LTS/stable lines are Prometheus 3.x, Grafana 13.x, nginx 1.30). Not bumped here because image tags could not be verified from the build sandbox, and Prometheus 3 / Grafana 12+ change config and dashboard behaviour. Dependabot will open the PRs.
+- **Role changes apply at token expiry,** not instantly (roles live in the JWT; there is no revocation list).
+- **Authorization is role-level only,** not per-resource (see the README).
+- **Nothing here has run against real infrastructure.** `helm lint` / `terraform validate` run for the first time in CI; the in-repo `_approximate_render_check.py` is only a structural stand-in.
+- **GHCR images are published but not yet consumed:** `gitops/values/services/*.yaml` still reference `icop-<service>:latest`.
+- **The design document's larger pieces are not built yet:** the monitoring service (still a 501 stub), Loki/OpenTelemetry, self-healing, Kubernetes management views, and server-side analytics aggregation. That is the next phase.
+- **`ruff format` is not enforced** (it wasn't before; about 50 files would be reformatted).
+
+## Phase 9 — Operations console rebuild
+
+The console was one 186-line file with several real defects (found by reading it
+and by driving it in a browser). It is now a layered app with tests. **45 console
+tests** (unit, component, whole-app), `tsc` strict, `pnpm audit` clean, and an
+`axe-core` pass (WCAG 2.0/2.1 A+AA + best practices) with zero violations on every
+page in light and dark mode. Browser checks ran against the built bundle served by the
+real nginx config at 1440, 768, 390 and 320px: no horizontal overflow on any page,
+no console errors, no CSP violations, no broken internal links.
+
+### Defects in the old console, now fixed
+
+| Defect | Fix |
+|---|---|
+| "Open incidents" and "Active alerts" read `open_count` / `active_count`, keys the analytics API never returns, so both always showed "—" | Derived from `by_status`; a failed section shows as *degraded*, not as a zero (`lib/overview.ts`, tested) |
+| Deployment success shown as `0.9167` | Formatted as a percentage |
+| Environment status `ready` / `firing` had no styling (CSS targeted `active`/`provisioned`) | One status → tone map covering every value the API emits |
+| "API documentation" link served the SPA shell, not Swagger; Grafana link hard-coded to `localhost:3000` | Both come from runtime config and are hidden when unset |
+| Hard-coded "Production posture" badge (a claim nothing verified) | Environment label from config, hidden when unset |
+| Expired token left the user on a broken dashboard; refresh token never used | Single-flight refresh + retry, then sign-in with an explanation |
+| No favicon, 404, footer, mobile menu, skip link, dark mode, focus states, print styles | Added (see below) |
+| Provisioning fired on a single click, with no confirmation | Confirmation dialog (Cancel focused first, focus trap, Escape); closes after the attempt so a refusal can't leave a dead backdrop |
+| Search box had no accessible name; hamburger was visible on desktop; failed-action dialog blocked the page | Found by the tests / browser run; fixed |
+
+### What was added
+
+Pages: Overview, Incidents (filter, load more, state transitions), Alerts
+(acknowledge), Environments (provision/destroy, live refresh while working),
+Audit log, Users & roles, custom 404 and no-access pages. Chrome: sticky header,
+mobile drawer menu, dark mode (no flash on load), skip link, scroll progress bar,
+back-to-top, command palette search (Ctrl/Cmd+K), copy buttons (support email,
+resource ids, error references), toasts for every success and failure, loading
+skeletons, print stylesheet, clickable logo and email, dynamic copyright year,
+favicon, titles and meta description per page.
+
+### Platform hardening that came with it
+
+- nginx: CSP (`script-src 'self'`, no inline script/eval, `frame-ancestors 'none'`), COOP/CORP,
+  Permissions-Policy, `server_tokens off`, 1 MB body limit, real 404s for missing assets
+  (instead of the SPA shell served as JavaScript), immutable caching for hashed assets,
+  `no-store` for config. Exercised against nginx 1.24 here; the image pins 1.27.
+- One image for every environment: `/config.json` is generated from `ICOP_*` environment
+  variables at container start; values are escaped and re-validated in the browser.
+- The console image build runs type-check and tests, so a failing test means no image.
+- Gateway behind nginx: `TRUST_PROXY_HEADERS` is on in compose, otherwise every console user
+  shared one rate-limit bucket (the gateway saw nginx's address for everyone).
+- Frontend dependency advisories fixed (vite 8.2.4; `source-map-js` override). pnpm 11 reads
+  overrides from `pnpm-workspace.yaml`, not `package.json`: the frozen-lockfile install was
+  verified under the pinned pnpm 11.19.0. CI now runs the frontend type-check, tests and audit.
+
+### Deliberately not built
+
+Cookie banner, UTM tracking and a floating contact button: this is a login-gated internal tool
+with no cookies, no analytics and no public traffic (reasoning in `frontend/README.md`).
+
+### Backend code health
+
+`vulture` at 80% confidence flags only two false positives (pydantic validator `cls`); at 60% every
+hit is a framework-registered route or a test hook. `_utcnow` is repeated in each service by design:
+services are independently deployable and share no library.
+
+### Still open
+
+- No server-side logout / token revocation: "Sign out" forgets the tokens locally.
+- The `infrastructure` and `deployment` services record the audit actor as `system` rather than the
+  caller (the gateway forwards a verified `X-ICOP-User`; these routes don't read it yet).
+- The CSP and nginx config were tested with nginx 1.24 and a mock gateway, not the production image
+  (no container runtime in the build sandbox).
+- Pages are not code-split (one 74 KB gzipped JS bundle); fine today, revisit if pages grow.
+
 ## Immediate next steps (in order)
 
 1. Ground every "written, never run for real" caveat in reality: `helm
@@ -713,9 +823,8 @@ endpoint entirely.
    `deployment-worker`'s ClusterRole is scoped around) intentional
    design or an unnoticed mismatch? Affects whether that ClusterRole is
    the right shape long-term or a wider-than-necessary stopgap.
-4. Audit coverage is at fifteen call sites now; a role-update endpoint
-   (auth doesn't have one yet) and notification delivery outcomes are the
-   next plausible additions. Same status as before Phase 7 — not what
-   this pass was scoped to.
+4. Audit coverage now includes `user.role_changed`, `user.login_failed` and
+   `user.bootstrap_admin_created` (Phase 8); notification delivery outcomes
+   are the next plausible addition.
 5. No "Monitoring Service" as its own thing yet — still the one
    remaining 501 stub on the gateway (see the section above).

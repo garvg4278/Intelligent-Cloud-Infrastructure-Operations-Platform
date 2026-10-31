@@ -50,6 +50,9 @@ def deliver_with_retries(
                 return
             except SenderError as exc:
                 crud.record_attempt_failure(db, notification, str(exc))
+            except Exception as exc:  # noqa: BLE001 -- a sender bug must end in "failed", never "pending" forever
+                logger.exception("unexpected error delivering notification %s", notification_id)
+                crud.record_attempt_failure(db, notification, f"unexpected error: {exc}")
 
         if attempt_number < max_attempts:
             sleep_fn(min(2**attempt_number, 30))  # exponential backoff, capped at 30s

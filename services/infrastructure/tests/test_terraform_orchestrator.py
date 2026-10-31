@@ -24,7 +24,9 @@ def test_apply_runs_init_then_apply_then_reads_outputs(orch):
     with patch("app.terraform_orchestrator.subprocess.run") as mock_run:
         outputs_json = json.dumps({
             "cluster_name": {"value": "icop-staging", "type": "string", "sensitive": False},
-            "ssm_transfer_bucket": {"value": "icop-staging-icop-ssm-transfer", "type": "string", "sensitive": False},
+            "ssm_transfer_bucket": {
+                "value": "icop-staging-icop-ssm-transfer", "type": "string", "sensitive": False,
+            },
         })
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="", stderr=""),  # init
@@ -50,7 +52,9 @@ def test_apply_runs_init_then_apply_then_reads_outputs(orch):
 
 def test_apply_raises_on_init_failure_without_attempting_apply(orch):
     with patch("app.terraform_orchestrator.subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="Error: no valid credential sources")
+        mock_run.return_value = MagicMock(
+            returncode=1, stdout="", stderr="Error: no valid credential sources"
+        )
         with pytest.raises(TerraformOrchestratorError) as exc_info:
             orch.apply("/terraform/environments/staging")
         assert "no valid credential sources" in exc_info.value.stderr

@@ -15,4 +15,7 @@ ignore = [
     # to catch. Flagging it here would mean either fighting the linter on
     # every route or writing non-idiomatic FastAPI to satisfy it.
     "B008",
+    # StrEnum changes str(member) from "Role.admin" to "admin"; these enums back
+    # database columns and API payloads, so a style rule is not worth that risk.
+    "UP042",
 ]

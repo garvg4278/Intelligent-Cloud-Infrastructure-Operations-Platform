@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
@@ -6,7 +6,7 @@ from . import models, schemas
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def create_rule(db: Session, payload: schemas.AlertRuleCreate) -> models.AlertRule:
@@ -89,10 +89,19 @@ def list_alerts(
     db: Session,
     status: models.AlertStatus | None = None,
     severity: models.AlertSeverity | None = None,
+    service_name: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[models.Alert]:
     query = db.query(models.Alert)
+    if service_name:
+        # Filter in SQL via the rule: clients (analytics, aiops) used to
+        # download EVERY service's alerts and join against rule ids in
+        # memory, which silently dropped this service's alerts once other
+        # services' alerts pushed them past the first page.
+        query = query.join(models.AlertRule, models.Alert.rule_id == models.AlertRule.id).filter(
+            models.AlertRule.service_name == service_name
+        )
     if status:
         query = query.filter(models.Alert.status == status)
     if severity:

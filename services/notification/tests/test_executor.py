@@ -105,3 +105,23 @@ def test_already_sent_notification_is_not_redelivered(db_session):
     # Calling it again (e.g. a duplicate task execution) must not re-send
     deliver_with_retries(notification_id, {"webhook": sender}, sleep_fn=no_sleep)
     assert len(sender.calls) == 1
+
+
+
+def test_unexpected_sender_exception_ends_in_failed_not_pending_forever(db_session):
+    """Regression: only SenderError was handled, so any other exception
+    escaped the task and left the row 'pending' and invisible."""
+
+    class Exploding:
+        def send(self, target, subject, body):
+            raise RuntimeError("sender bug")
+
+    notification_id = _create(db_session, max_attempts=2)
+
+    deliver_with_retries(notification_id, {"webhook": Exploding()}, sleep_fn=no_sleep)
+
+    db_session.expire_all()
+    row = crud.get_notification(db_session, notification_id)
+    assert row.status == NotificationStatus.failed
+    assert row.attempts == 2
+    assert "unexpected error" in row.last_error

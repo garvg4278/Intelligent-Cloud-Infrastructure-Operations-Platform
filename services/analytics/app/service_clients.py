@@ -13,6 +13,31 @@ class ServiceClientError(Exception):
     pass
 
 
+# The list endpoints cap `limit` at 200 and default to 50. These clients used
+# to call them bare, so every statistic was computed from only the newest 50
+# records -- silently wrong (not an error) for any service with history.
+PAGE_SIZE = 200
+# Bounds memory/time per request. Past this, the honest answer is an error,
+# not a quietly truncated statistic; the real fix at that scale is
+# server-side aggregation (see ROADMAP.md).
+MAX_PAGES = 100
+
+
+def fetch_all(url: str, params: dict, label: str) -> list[dict]:
+    items: list[dict] = []
+    for page in range(MAX_PAGES):
+        resp = httpx.get(url, params={**params, "limit": PAGE_SIZE, "offset": page * PAGE_SIZE}, timeout=10)
+        resp.raise_for_status()
+        batch = resp.json()
+        items.extend(batch)
+        if len(batch) < PAGE_SIZE:
+            return items
+    raise ServiceClientError(
+        f"{label}: more than {MAX_PAGES * PAGE_SIZE} records; "
+        "refusing to report statistics from a truncated set"
+    )
+
+
 class DeploymentClient(Protocol):
     def all_deployments(self, service_name: str) -> list[dict]: ...
 
@@ -37,13 +62,9 @@ class HttpDeploymentClient:
 
     def all_deployments(self, service_name: str) -> list[dict]:
         try:
-            resp = httpx.get(
-                f"{self.base_url}/deployments", params={"service_name": service_name}, timeout=10
-            )
-            resp.raise_for_status()
+            return fetch_all(f"{self.base_url}/deployments", {"service_name": service_name}, "deployments")
         except httpx.HTTPError as exc:
             raise ServiceClientError(f"deployment service query failed: {exc}") from exc
-        return resp.json()
 
 
 class HttpIncidentClient:
@@ -52,13 +73,9 @@ class HttpIncidentClient:
 
     def all_incidents(self, service_name: str) -> list[dict]:
         try:
-            resp = httpx.get(
-                f"{self.base_url}/incidents", params={"service_name": service_name}, timeout=10
-            )
-            resp.raise_for_status()
+            return fetch_all(f"{self.base_url}/incidents", {"service_name": service_name}, "incidents")
         except httpx.HTTPError as exc:
             raise ServiceClientError(f"incident service query failed: {exc}") from exc
-        return resp.json()
 
 
 class HttpAlertClient:
@@ -71,14 +88,16 @@ class HttpAlertClient:
                 f"{self.base_url}/alerts/rules", params={"service_name": service_name}, timeout=10
             )
             rules_resp.raise_for_status()
-            alerts_resp = httpx.get(f"{self.base_url}/alerts", timeout=10)
-            alerts_resp.raise_for_status()
+            all_alerts = fetch_all(f"{self.base_url}/alerts", {"service_name": service_name}, "alerts")
         except httpx.HTTPError as exc:
             raise ServiceClientError(f"alert service query failed: {exc}") from exc
 
         rules = rules_resp.json()
         rule_ids = {r["id"] for r in rules}
-        alerts = [a for a in alerts_resp.json() if a["rule_id"] in rule_ids]
+        # Server-side filtering does the work; this stays as a guard so an
+        # alert service that ignores `service_name` can't leak other
+        # services' alerts into this service's statistics.
+        alerts = [a for a in all_alerts if a["rule_id"] in rule_ids]
         return rules, alerts
 
 

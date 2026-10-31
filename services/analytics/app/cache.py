@@ -51,7 +51,10 @@ class RedisCacheClient:
         try:
             self._redis.setex(key, ttl_seconds, value)
         except redis.RedisError:
-            logger.warning("cache set failed -- this response won't be cached, next request computes fresh too", exc_info=True)
+            logger.warning(
+                "cache set failed -- this response won't be cached, next request computes fresh too",
+                exc_info=True,
+            )
 
 
 _cache_client: CacheClient | None = None

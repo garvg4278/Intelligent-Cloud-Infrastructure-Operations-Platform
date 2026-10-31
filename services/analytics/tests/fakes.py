@@ -62,7 +62,8 @@ class FakeCacheClient:
 
     def get(self, key: str) -> str | None:
         if self.raise_on_get:
-            return None  # RedisCacheClient's real behavior on a Redis error is to return None, not raise -- see app/cache.py
+            # RedisCacheClient returns None on a Redis error rather than raising -- see app/cache.py
+            return None
         return self.store.get(key)
 
     def set(self, key: str, value: str, ttl_seconds: int) -> None:

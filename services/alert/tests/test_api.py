@@ -324,3 +324,35 @@ def test_readiness_check_returns_503_when_database_is_unreachable(client):
             app.dependency_overrides[get_db] = original_override
         else:
             app.dependency_overrides.pop(get_db, None)
+
+
+def test_alerts_can_be_filtered_by_service_in_sql(client, metrics_source):
+    """analytics/aiops used to fetch every service's alerts and join in
+    memory; the filter now lives where pagination does."""
+    auth_rule = _create_rule(client, service_name="auth").json()
+    gw_rule = _create_rule(client, service_name="gateway", name="gw rule").json()
+    metrics_source.value = 0.42
+    client.post(f"/alerts/rules/{auth_rule['id']}/evaluate")
+    client.post(f"/alerts/rules/{gw_rule['id']}/evaluate")
+
+    only_auth = client.get("/alerts", params={"service_name": "auth"}).json()
+    assert [a["rule_id"] for a in only_auth] == [auth_rule["id"]]
+    assert client.get("/alerts", params={"service_name": "nonexistent"}).json() == []
+    assert len(client.get("/alerts").json()) == 2  # unfiltered behaviour unchanged
+
+
+def test_service_filter_is_applied_before_pagination(client, metrics_source):
+    """The bug: a quiet service's alert sat behind a noisy service's newer
+    ones, so page 1 of the unfiltered list never contained it."""
+    quiet = _create_rule(client, service_name="quiet", name="quiet rule").json()
+    metrics_source.value = 0.42
+    client.post(f"/alerts/rules/{quiet['id']}/evaluate")
+    for i in range(3):
+        noisy = _create_rule(client, service_name="noisy", name=f"noisy {i}").json()
+        client.post(f"/alerts/rules/{noisy['id']}/evaluate")
+
+    unfiltered_page = client.get("/alerts", params={"limit": 2}).json()
+    assert quiet["id"] not in [a["rule_id"] for a in unfiltered_page]  # buried
+
+    filtered_page = client.get("/alerts", params={"limit": 2, "service_name": "quiet"}).json()
+    assert [a["rule_id"] for a in filtered_page] == [quiet["id"]]

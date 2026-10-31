@@ -1,4 +1,9 @@
+import os
 import time
+
+# Must be set before `app.config` is imported (Settings() runs at import time and
+# refuses the built-in dev secret unless ICOP_ENV=local).
+os.environ.setdefault("ICOP_ENV", "local")
 
 import fakeredis
 import jwt
@@ -72,3 +77,16 @@ def client(fake_redis):
     with TestClient(app) as test_client:
         test_client.headers["Authorization"] = f"Bearer {make_token()}"
         yield test_client
+
+
+@pytest.fixture(autouse=True)
+def _pin_rate_limit_window(monkeypatch):
+    """The limiter is fixed-window (`int(time.time() // window)`), so a test that
+    fires RATE_LIMIT_REQUESTS requests and expects the next to be 429 fails if the
+    clock crosses a window boundary mid-test (seen once in ~20 runs). Pin the
+    limiter's clock; JWT expiry etc. keep using the real one."""
+    import types
+
+    from app.middleware import rate_limit
+
+    monkeypatch.setattr(rate_limit, "time", types.SimpleNamespace(time=lambda: 1_000_000.0))

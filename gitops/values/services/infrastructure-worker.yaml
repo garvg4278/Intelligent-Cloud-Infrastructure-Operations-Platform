@@ -34,3 +34,17 @@ workload:
 # "register the new cluster" step starts running kubectl for real,
 # revisit this -- until then, granting cluster-wide K8s RBAC here would
 # be unused permission with no code behind it.
+
+# ---- Pod hardening override (see infra/helm/service-chart/values.yaml) ----
+# This image still runs as root: it shells out to terraform/ansible, which write
+# caches/state under $HOME and the working directory. Non-root + read-only
+# rootfs for it needs testing against a real AWS account; tracked in ROADMAP.md.
+# Every other service uses the chart's restricted defaults.
+podSecurityContext: null   # null (not {}): Helm merges maps with the chart defaults, only null removes a key
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: ["ALL"]
+tmpVolume:
+  enabled: false

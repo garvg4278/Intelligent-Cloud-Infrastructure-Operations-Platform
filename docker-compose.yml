@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: icop
       POSTGRES_DB: icop
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +18,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -28,8 +28,8 @@ services:
   rabbitmq:
     image: rabbitmq:3-management-alpine
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: icop
       RABBITMQ_DEFAULT_PASS: icop
@@ -44,6 +44,14 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://icop:icop@postgres:5432/icop
       SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      # "local" is what lets the built-in dev secret through; the services refuse
+      # to start with it under any other value. Set ICOP_ENV=production in .env
+      # together with a real SECRET_KEY (>= 32 bytes) when running this stack for real.
+      ICOP_ENV: ${ICOP_ENV:-local}
+      # First-run admin. Registration only ever creates viewers, so without this
+      # nobody can reach the operator/admin-only routes. Leave both empty to skip.
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
       ACCESS_TOKEN_EXPIRE_MINUTES: "30"
       REFRESH_TOKEN_EXPIRE_DAYS: "7"
       AUDIT_SERVICE_URL: http://audit:8000
@@ -53,7 +61,7 @@ services:
       audit:
         condition: service_started
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
 
   deployment:
     build: ./services/deployment
@@ -73,7 +81,7 @@ services:
       audit:
         condition: service_started
     ports:
-      - "8002:8000"
+      - "127.0.0.1:8002:8000"
 
   # Actually runs `helm`/`kubectl` for real deployments. Needs a reachable
   # cluster to do anything useful -- mount a real kubeconfig (uncomment
@@ -111,7 +119,7 @@ services:
       audit:
         condition: service_started
     ports:
-      - "8003:8000"
+      - "127.0.0.1:8003:8000"
 
   alert:
     build: ./services/alert
@@ -135,7 +143,7 @@ services:
       audit:
         condition: service_started
     ports:
-      - "8004:8000"
+      - "127.0.0.1:8004:8000"
 
   alert-worker:
     build: ./services/alert
@@ -174,27 +182,27 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-    command: celery -A app.tasks beat --loglevel=info
+    command: celery -A app.tasks beat --loglevel=info -s /tmp/celerybeat-schedule
 
   prometheus:
     image: prom/prometheus:v2.55.1
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
 
   grafana:
     image: grafana/grafana:11.1.0
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      # Local-dev default only (the port is loopback-bound); override in .env.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
     volumes:
       - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - prometheus
 
@@ -217,7 +225,7 @@ services:
       alert:
         condition: service_started
     ports:
-      - "8005:8000"
+      - "127.0.0.1:8005:8000"
 
   analytics:
     build: ./services/analytics
@@ -233,7 +241,7 @@ services:
       alert:
         condition: service_started
     ports:
-      - "8006:8000"
+      - "127.0.0.1:8006:8000"
 
   notification:
     build: ./services/notification
@@ -248,7 +256,7 @@ services:
       rabbitmq:
         condition: service_healthy
     ports:
-      - "8007:8000"
+      - "127.0.0.1:8007:8000"
 
   notification-worker:
     build: ./services/notification
@@ -270,7 +278,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8008:8000"
+      - "127.0.0.1:8008:8000"
 
   # Actually runs `terraform`/`ansible-playbook` for real environment
   # provisioning. Needs real AWS credentials to do anything useful --
@@ -308,7 +316,7 @@ services:
       audit:
         condition: service_started
     ports:
-      - "8009:8000"
+      - "127.0.0.1:8009:8000"
 
   infrastructure-worker:
     build: ./services/infrastructure
@@ -354,6 +362,11 @@ services:
       # together. Setting a real SECRET_KEY and only putting it on one of
       # the two would silently break every authenticated request.
       SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      ICOP_ENV: ${ICOP_ENV:-local}
+      # nginx (the console) fronts this gateway and appends the real client address
+      # to X-Forwarded-For; the gateway takes the rightmost entry. Without this every
+      # console user shares nginx's IP and therefore ONE rate-limit bucket.
+      TRUST_PROXY_HEADERS: "true"
       DEPLOYMENT_SERVICE_URL: http://deployment:8000
       INCIDENT_SERVICE_URL: http://incident:8000
       ALERT_SERVICE_URL: http://alert:8000
@@ -387,18 +400,24 @@ services:
       infrastructure:
         condition: service_started
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
   # Browser-facing operations console. It serves the React application and
   # reverse-proxies /api/ to the gateway, keeping tokens on a same-origin
   # path in local development and avoiding a permissive CORS configuration.
   frontend:
     build: ./frontend
+    environment:
+      # Served to the browser as /config.json at start-up; see frontend/docker/40-icop-config.sh.
+      ICOP_ENVIRONMENT_LABEL: ${ICOP_ENVIRONMENT_LABEL:-local}
+      ICOP_GRAFANA_URL: ${ICOP_GRAFANA_URL:-http://localhost:3000}
+      ICOP_API_DOCS_URL: ${ICOP_API_DOCS_URL:-http://localhost:8000/docs}
+      ICOP_SUPPORT_EMAIL: ${ICOP_SUPPORT_EMAIL:-}
     depends_on:
       gateway:
         condition: service_started
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
 
 volumes:
   postgres_data:

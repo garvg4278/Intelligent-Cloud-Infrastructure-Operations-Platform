@@ -10,3 +10,17 @@ envFromSecret: icop-deployment-secrets
 # actually shells out to helm/kubectl and would be where artifact
 # upload/download eventually gets built -- see
 # terraform/modules/irsa/README.md and gitops/values/services/deployment-worker.yaml.
+
+# ---- Pod hardening override (see infra/helm/service-chart/values.yaml) ----
+# This image still runs as root: it shells out to helm/kubectl, which write
+# caches/state under $HOME and the working directory. Non-root + read-only
+# rootfs for it needs testing against a real cluster; tracked in ROADMAP.md.
+# Every other service uses the chart's restricted defaults.
+podSecurityContext: null   # null (not {}): Helm merges maps with the chart defaults, only null removes a key
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: ["ALL"]
+tmpVolume:
+  enabled: false

@@ -151,7 +151,9 @@ def test_login_emits_audit_event(client, audit_client):
     assert audit_client.calls[0]["actor"] == "audited2@example.com"
 
 
-def test_failed_login_does_not_emit_an_audit_event(client, audit_client):
+def test_failed_login_for_unknown_email_does_not_emit_an_audit_event(client, audit_client):
+    # The audit trail is append-only and kept forever: attempts against
+    # arbitrary attacker-chosen strings must not be able to fill it.
     resp = client.post("/auth/login", data={"username": "nobody@example.com", "password": "wrong"})
     assert resp.status_code == 401
     assert audit_client.calls == []

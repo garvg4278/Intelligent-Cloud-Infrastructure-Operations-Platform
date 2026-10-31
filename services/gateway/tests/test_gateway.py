@@ -142,7 +142,8 @@ def test_rate_limiter_fails_open_when_redis_is_unreachable(client):
         mock_get_redis.return_value = broken_redis
 
         resp = client.get("/api/v1/monitoring/list")
-        assert resp.status_code == 501  # reached the real stub, not a 500 -- the outage was absorbed, not propagated
+        # reached the real stub, not a 500 -- the outage was absorbed, not propagated
+        assert resp.status_code == 501
 
 
 def test_auth_proxy_forwards_to_auth_service(client):
@@ -317,24 +318,18 @@ def test_notifications_proxy_forwards_to_notification_service(client):
 
 def test_audit_proxy_forwards_nested_events_path(client):
     fake_response = httpx.Response(
-        201,
-        json={"id": "a1", "action": "user.login"},
-        request=httpx.Request("POST", "http://audit-service/audit/events"),
+        200,
+        json=[{"id": "a1", "action": "user.login"}],
+        request=httpx.Request("GET", "http://audit-service/audit/events"),
     )
     with patch("app.routers.proxy.get_http_client") as mock_get_client:
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(return_value=fake_response)
         mock_get_client.return_value = mock_client
 
-        resp = client.post(
-            "/api/v1/audit/events",
-            json={
-                "actor": "alice", "action": "user.login",
-                "resource_type": "user", "source_service": "auth",
-            },
-        )
+        resp = client.get("/api/v1/audit/events")
 
-        assert resp.status_code == 201
+        assert resp.status_code == 200
         called_url = mock_client.request.call_args.args[1]
         assert called_url.endswith("/audit/events")
 
@@ -353,6 +348,7 @@ def test_infrastructure_proxy_forwards_environments_path(client):
         resp = client.post(
             "/api/v1/infrastructure/environments",
             json={"environment_type": "staging"},
+            headers={"Authorization": f"Bearer {make_token(role='admin')}"},
         )
 
         assert resp.status_code == 202
@@ -575,6 +571,22 @@ def test_body_within_limit_is_forwarded_normally(client):
 
         resp = client.post("/api/v1/deployments", json={"service_name": "auth"})
         assert resp.status_code == 202
+
+
+def test_docs_pages_get_a_csp_that_lets_swagger_render(client):
+    # Regression: the blanket `default-src 'none'` CSP blocked Swagger UI's
+    # CDN bundle and inline bootstrap script, so /docs was a blank page.
+    docs = client.get("/docs")
+    assert docs.status_code == 200
+    csp = docs.headers["Content-Security-Policy"]
+    assert "https://cdn.jsdelivr.net" in csp
+    assert "frame-ancestors 'none'" in csp
+    assert "object-src 'none'" in csp
+    # Every other response keeps the strict policy -- including a path that
+    # merely starts with the same letters.
+    for path in ("/health", "/api/v1/deployments", "/docsx"):
+        other = client.get(path, headers={"Authorization": ""})
+        assert "default-src 'none'; frame-ancestors 'none'" == other.headers["Content-Security-Policy"], path
 
 
 def test_security_headers_present_on_success_and_error_responses(client):

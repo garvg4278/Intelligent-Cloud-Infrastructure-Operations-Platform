@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
@@ -74,7 +74,7 @@ def transition_status(
     previous = incident.status
     incident.status = target
     if target == models.IncidentStatus.resolved:
-        incident.resolved_at = datetime.now(timezone.utc)
+        incident.resolved_at = datetime.now(UTC)
     elif previous == models.IncidentStatus.resolved and target != models.IncidentStatus.closed:
         incident.resolved_at = None  # reopened
 

@@ -16,6 +16,16 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege for the default GITHUB_TOKEN: every job below only reads the
+# repo. The one job that needs more (publish) declares it itself.
+permissions:
+  contents: read
+
+# A newer push to the same ref supersedes the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: test (${{ matrix.service }})
@@ -62,13 +72,15 @@ jobs:
           python-version: "3.12"
 
       - name: Install ruff
-        run: pip install ruff
+        # Pinned so a new ruff release can't turn a green main red overnight;
+        # Dependabot does not track this, bump it deliberately.
+        run: pip install ruff==0.16.9
 
       - name: Run ruff
         run: ruff check services/
 
   frontend:
-    name: frontend build
+    name: frontend (lint, test, audit, build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +99,19 @@ jobs:
         working-directory: frontend
         run: pnpm install --frozen-lockfile
 
-      - name: Type-check and build the operations console
+      - name: Type-check
+        working-directory: frontend
+        run: pnpm run lint
+
+      - name: Unit and component tests
+        working-directory: frontend
+        run: pnpm run test
+
+      - name: Audit dependencies
+        working-directory: frontend
+        run: pnpm audit --audit-level=moderate
+
+      - name: Build the operations console
         working-directory: frontend
         run: pnpm run build
 
@@ -136,6 +160,71 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
 
+  # Known-vulnerable pinned dependencies. Every service pins exact versions, so
+  # nothing upgrades itself; this is what tells you a pin has gone bad.
+  dependency-audit:
+    name: dependency audit (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit every service's requirements
+        run: |
+          status=0
+          for f in services/*/requirements.txt; do
+            echo "::group::$f"
+            pip-audit -r "$f" --disable-pip --no-deps || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+  # Committed secrets / credentials anywhere in the tree.
+  secret-scan:
+    name: secret scan (trivy fs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan repository for secrets
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scanners: secret
+          exit-code: "1"
+
+  # Real `helm lint` + `helm template` (the in-repo _approximate_render_check.py
+  # is only a stand-in for when no helm binary is available). Renders the chart
+  # with every per-service values file (environment first, service second --
+  # the same precedence the ApplicationSets use) so a bad override fails here, not in ArgoCD.
+  helm:
+    name: helm lint + template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: helm lint
+        run: helm lint infra/helm/service-chart
+
+      - name: helm template with every gitops values file
+        run: |
+          for f in gitops/values/services/*.yaml; do
+            for env in staging production; do
+              echo "::group::$(basename "$f") ($env)"
+              helm template "icop-$env-$(basename "$f" .yaml)" infra/helm/service-chart \
+                -f "gitops/values/environments/$env.yaml" -f "$f" > /dev/null
+              echo "::endgroup::"
+            done
+          done
+
   # terraform fmt/validate and an Ansible syntax-check both need network
   # access (to download the AWS provider plugin and the amazon.aws
   # collection respectively) that this repo's own build sandbox never had
@@ -181,3 +270,45 @@ jobs:
       - name: ansible-playbook syntax check
         working-directory: ansible
         run: ansible-playbook -i inventory/ci-static.ini playbooks/site.yml --syntax-check
+
+  # Publish one image per service to GitHub Container Registry, tagged with the
+  # commit SHA. Main only, and only after every check above is green.
+  # Nothing consumes these yet: gitops/values/services/*.yaml still reference
+  # `icop-<service>:latest`; point them at ghcr.io/<owner>/icop-<service>:<sha>
+  # (or let Argo CD Image Updater do it) once you want GitOps to deploy them.
+  publish:
+    name: publish (${{ matrix.service }})
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, lint, image-scan, dependency-audit, secret-scan, helm, frontend, validate-infra]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - gateway
+          - auth
+          - deployment
+          - incident
+          - alert
+          - aiops
+          - analytics
+          - notification
+          - audit
+          - infrastructure
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/icop-${{ matrix.service }}:${{ github.sha }}

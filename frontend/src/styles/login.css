@@ -1,0 +1,18 @@
+.login { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); }
+.login-hero { background: radial-gradient(circle at 20% 10%, #1d4a73 0, #0c1a2e 45%, #08111f 80%); color: #e8f0fb; padding: clamp(2rem, 7vw, 6rem); display: flex; flex-direction: column; gap: 1.4rem; justify-content: center; }
+.login-hero .logo { color: #fff; }
+.login-hero h1 { font-size: clamp(2rem, 4.2vw, 3.8rem); letter-spacing: -0.04em; max-width: 16ch; }
+.login-hero p { color: #b6c6dc; max-width: 46ch; font-size: 1.05rem; }
+.login-panel { background: var(--surface); padding: clamp(1.5rem, 6vw, 4.5rem); display: flex; flex-direction: column; justify-content: center; gap: 1rem; position: relative; min-width: 0; }
+.login-panel h2 { font-size: 1.7rem; }
+.login-theme { position: absolute; top: 1rem; right: 1rem; }
+.logo { display: inline-flex; align-items: center; gap: 0.6rem; font-weight: 800; letter-spacing: 0.1em; font-size: 1.1rem; color: var(--text); text-decoration: none; }
+.logo:hover { color: inherit; opacity: 0.85; }
+.logo svg { color: #3ddba8; }
+
+@media (max-width: 860px) {
+  .login { grid-template-columns: minmax(0, 1fr); }
+  .login-hero { padding: 2rem 1.25rem 2.25rem; gap: 1rem; }
+  .login-hero h1 { font-size: clamp(1.7rem, 7vw, 2.4rem); }
+  .login-panel { padding: 1.75rem 1.25rem 2.5rem; }
+}

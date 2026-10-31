@@ -5,4 +5,7 @@ exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "BLE"]
-ignore = ["B008"]  # see services/auth/pyproject.toml for why
+ignore = [
+    "B008",  # see services/auth/pyproject.toml for why
+    "UP042",  # see services/auth/pyproject.toml for why
+]

@@ -313,3 +313,37 @@ def test_readiness_check_returns_503_when_database_is_unreachable(client):
             app.dependency_overrides[get_db] = original_override
         else:
             app.dependency_overrides.pop(get_db, None)
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "bad_tag",
+    [
+        "v1,image.repository=docker.io/attacker/miner",   # Helm --set injection
+        "v1,serviceAccount.name=privileged-sa",
+        "v1 --set x=y",                                    # whitespace / flag smuggling
+        "v1\nimage.tag=evil",                              # newline
+        "-v1",                                             # leading dash looks like a CLI flag
+        ".hidden",
+        "a/b",                                             # registry path is not a tag
+        "tag:with:colons",
+        "{a,b}",
+        "x" * 129,                                         # OCI max length is 128
+    ],
+)
+def test_image_tag_outside_oci_grammar_is_rejected(client, orchestrator, bad_tag):
+    resp = client.post(
+        "/deployments", json={"service_name": "auth", "environment": "local", "image_tag": bad_tag}
+    )
+    assert resp.status_code == 422
+    assert orchestrator.deployed == []  # nothing reached Helm
+
+
+@pytest.mark.parametrize("good_tag", ["v1", "v1.2.3", "1.0.0-rc.1", "release_2026-10-30", "a" * 128])
+def test_legitimate_image_tags_still_accepted(client, orchestrator, good_tag):
+    resp = client.post(
+        "/deployments", json={"service_name": "auth", "environment": "local", "image_tag": good_tag}
+    )
+    assert resp.status_code == 202

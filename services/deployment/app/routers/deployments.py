@@ -56,4 +56,6 @@ def list_deployments(
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
-    return crud.list_deployments(db, service_name=service_name, environment=environment, limit=limit, offset=offset)
+    return crud.list_deployments(
+        db, service_name=service_name, environment=environment, limit=limit, offset=offset
+    )

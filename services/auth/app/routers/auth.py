@@ -3,9 +3,10 @@ from datetime import timedelta
 import jwt as pyjwt
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
+from prometheus_client import Counter
 from sqlalchemy.orm import Session
 
-from .. import crud, schemas, security
+from .. import bootstrap, crud, schemas, security
 from ..audit_client import record_safely
 from ..config import settings
 from ..database import get_db
@@ -13,6 +14,10 @@ from ..deps import get_current_user, require_role
 from ..models import Role, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+LOGIN_FAILURES = Counter(
+    "auth_login_failures_total", "Failed login attempts", ["reason"]
+)
 
 
 def _issue_tokens(user: User) -> schemas.Token:
@@ -29,7 +34,11 @@ def _issue_tokens(user: User) -> schemas.Token:
 
 @router.post("/register", response_model=schemas.UserOut, status_code=status.HTTP_201_CREATED)
 def register(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
-    if crud.get_user_by_email(db, user_in.email):
+    # The bootstrap admin address is reserved: same generic error as any
+    # taken address, so it can't be pre-registered as a viewer to block the
+    # admin's creation (and doesn't reveal that it's special).
+    is_bootstrap_email = str(user_in.email).strip().lower() == bootstrap.bootstrap_email()
+    if crud.get_user_by_email(db, user_in.email) or is_bootstrap_email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
     # Public registration always lands as "viewer" -- anything more
     # privileged has to be granted by an existing admin via a future
@@ -46,6 +55,18 @@ def register(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = crud.get_user_by_email(db, form_data.username)
     if not user or not security.verify_password(form_data.password, user.hashed_password):
+        # Every failure is counted (alertable: a spike is credential
+        # stuffing), but only failures against a REAL account are written to
+        # the audit trail. The trail is append-only and kept forever, so
+        # auditing attempts against arbitrary attacker-chosen strings would
+        # let anyone fill it with junk; for a real account the actor is
+        # bounded and the record is genuinely useful. No password is ever
+        # recorded.
+        LOGIN_FAILURES.labels(reason="bad_password" if user else "unknown_user").inc()
+        if user:
+            record_safely(
+                actor=user.email, action="user.login_failed", resource_type="user", resource_id=user.id,
+            )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is disabled")
@@ -80,3 +101,29 @@ def read_me(current_user: User = Depends(get_current_user)):
 @router.get("/users", response_model=list[schemas.UserOut])
 def list_users(db: Session = Depends(get_db), _admin: User = Depends(require_role(Role.admin))):
     return crud.list_users(db)
+
+
+@router.patch("/users/{user_id}/role", response_model=schemas.UserOut)
+def change_role(
+    user_id: str,
+    payload: schemas.RoleUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role(Role.admin)),
+):
+    target = crud.get_user_by_id(db, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    if target.id == admin.id:
+        # Prevents the last admin demoting themselves into a platform with
+        # nobody able to grant roles; another admin can still change it.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="admins cannot change their own role"
+        )
+
+    before = target.role.value
+    updated = crud.set_role(db, target, payload.role)
+    record_safely(
+        actor=admin.email, action="user.role_changed", resource_type="user", resource_id=updated.id,
+        before_state={"role": before}, after_state={"role": updated.role.value},
+    )
+    return updated

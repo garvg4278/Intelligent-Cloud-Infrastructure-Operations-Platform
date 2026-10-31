@@ -114,3 +114,13 @@ def test_readiness_check_returns_503_when_database_is_unreachable(client):
             app.dependency_overrides[get_db] = original_override
         else:
             app.dependency_overrides.pop(get_db, None)
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("field", ["target", "subject"])
+def test_line_breaks_in_header_fields_are_rejected_at_the_api(client, field):
+    payload = {"channel": "email", "target": "a@example.com", "subject": "hi", "body": "b"}
+    payload[field] = payload[field] + "\nBcc: victim@example.com"
+    assert client.post("/notifications", json=payload).status_code == 422

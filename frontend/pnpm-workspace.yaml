@@ -1,0 +1,4 @@
+# pnpm 11 reads settings from here, not from package.json's "pnpm" field.
+overrides:
+  # jsdom -> css-tree pulls an older source-map-js with a denial-of-service advisory.
+  source-map-js: ">=1.2.2"

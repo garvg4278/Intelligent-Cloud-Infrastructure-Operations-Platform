@@ -15,6 +15,9 @@ class ServiceClientError(Exception):
     pass
 
 
+RECENT_LIMIT = 5  # the agent only ever reads the 5 newest of each (lists are newest-first)
+
+
 class DeploymentClient(Protocol):
     def recent_deployments(self, service_name: str) -> list[dict]: ...
 
@@ -38,7 +41,9 @@ class HttpDeploymentClient:
     def recent_deployments(self, service_name: str) -> list[dict]:
         try:
             resp = httpx.get(
-                f"{self.base_url}/deployments", params={"service_name": service_name}, timeout=10
+                f"{self.base_url}/deployments",
+                params={"service_name": service_name, "limit": RECENT_LIMIT},
+                timeout=10,
             )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
@@ -57,7 +62,15 @@ class HttpAlertClient:
             )
             resp.raise_for_status()
             rules = resp.json()
-            all_alerts_resp = httpx.get(f"{self.base_url}/alerts", timeout=10)
+            # Filtered by service in SQL. Previously this fetched the newest 50
+            # alerts of EVERY service and filtered in memory, so a quiet
+            # service's alerts vanished behind a noisy one's -- and the agent
+            # then reported "no alerts" as evidence.
+            all_alerts_resp = httpx.get(
+                f"{self.base_url}/alerts",
+                params={"service_name": service_name, "limit": RECENT_LIMIT},
+                timeout=10,
+            )
             all_alerts_resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise ServiceClientError(f"alert service query failed: {exc}") from exc
@@ -73,7 +86,11 @@ class HttpIncidentClient:
 
     def recent_incidents(self, service_name: str) -> list[dict]:
         try:
-            resp = httpx.get(f"{self.base_url}/incidents", params={"service_name": service_name}, timeout=10)
+            resp = httpx.get(
+                f"{self.base_url}/incidents",
+                params={"service_name": service_name, "limit": RECENT_LIMIT},
+                timeout=10,
+            )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise ServiceClientError(f"incident service query failed: {exc}") from exc

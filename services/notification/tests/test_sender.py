@@ -11,11 +11,19 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from app.sender import SenderError, SMTPEmailSender, WebhookSender
+from app.sender import SenderError, SMTPEmailSender, WebhookSender, check_webhook_target
+
+
+def _resolver_for(*addresses):
+    """Stand-in for socket.getaddrinfo -- no real DNS in unit tests."""
+    return lambda host, port, proto=0: [(2, 1, 6, "", (addr, port)) for addr in addresses]
+
+
+PUBLIC = _resolver_for("93.184.216.34")
 
 
 def test_webhook_sender_posts_subject_and_body():
-    sender = WebhookSender()
+    sender = WebhookSender(resolver=PUBLIC)
     fake_response = MagicMock(status_code=200)
     fake_response.raise_for_status = lambda: None
 
@@ -28,7 +36,7 @@ def test_webhook_sender_posts_subject_and_body():
 
 
 def test_webhook_sender_raises_sender_error_on_failure():
-    sender = WebhookSender()
+    sender = WebhookSender(resolver=PUBLIC)
     with (
         patch("app.sender.httpx.post", side_effect=httpx.ConnectError("boom")),
         pytest.raises(SenderError),
@@ -105,3 +113,93 @@ def test_sender_registry_includes_email_when_smtp_host_is_configured():
     assert "webhook" in registry
     assert "email" in registry
     set_sender_registry(None)
+
+
+# ---- SSRF ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "169.254.169.254",   # cloud metadata endpoint -> instance-role credentials
+        "127.0.0.1",
+        "10.0.3.7",          # in-VPC: Postgres / Redis / other services
+        "172.16.0.5",
+        "192.168.1.1",
+        "100.64.0.1",        # carrier-grade NAT, not "public" either
+        "0.0.0.0",
+        "::1",
+        "fe80::1",
+        "::ffff:127.0.0.1",  # IPv4-mapped loopback must not slip through as 'IPv6'
+        "fd00::1",
+    ],
+)
+def test_webhook_target_resolving_to_a_non_public_address_is_refused(address):
+    with pytest.raises(SenderError, match="non-public"):
+        check_webhook_target("https://anything.example.com/hook", resolver=_resolver_for(address))
+
+
+def test_one_private_answer_among_public_ones_is_enough_to_refuse():
+    with pytest.raises(SenderError, match="non-public"):
+        check_webhook_target("https://x.example.com", resolver=_resolver_for("93.184.216.34", "10.0.0.9"))
+
+
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "gopher://x", "ftp://x/y", "http://", "not a url", "https://user:pw@x.example.com"])
+def test_non_http_or_credentialed_targets_are_refused(url):
+    with pytest.raises(SenderError):
+        check_webhook_target(url, resolver=PUBLIC)
+
+
+def test_public_target_is_allowed():
+    check_webhook_target("https://hooks.example.com/x", resolver=PUBLIC)
+
+
+def test_allow_private_switch_permits_an_internal_receiver():
+    check_webhook_target(
+        "http://chat-bridge.svc:8080/hook", resolver=_resolver_for("10.1.2.3"), allow_private=True
+    )
+
+
+def test_unresolvable_host_is_a_sender_error_not_a_crash():
+    def nxdomain(host, port, proto=0):
+        raise OSError("Name or service not known")
+
+    with pytest.raises(SenderError, match="could not be resolved"):
+        check_webhook_target("https://nope.invalid", resolver=nxdomain)
+
+
+def test_private_target_never_reaches_httpx():
+    with patch("app.sender.httpx.post") as mock_post, pytest.raises(SenderError):
+        WebhookSender(resolver=_resolver_for("169.254.169.254")).send("http://metadata/latest", "s", "b")
+    mock_post.assert_not_called()
+
+
+def test_webhook_does_not_follow_redirects():
+    fake = MagicMock()
+    fake.raise_for_status = lambda: None
+    with patch("app.sender.httpx.post", return_value=fake) as mock_post:
+        WebhookSender(resolver=PUBLIC).send("https://hooks.example.com/x", "s", "b")
+    assert mock_post.call_args[1]["follow_redirects"] is False
+
+
+# ---- SMTP --------------------------------------------------------------------------------
+
+def test_starttls_uses_a_verifying_context():
+    import ssl
+
+    sender = SMTPEmailSender("smtp.example.com", 587, "", "", "icop@example.com")
+    instance = MagicMock()
+    cm = MagicMock(__enter__=MagicMock(return_value=instance), __exit__=MagicMock(return_value=False))
+    with patch("app.sender.smtplib.SMTP", return_value=cm):
+        sender.send("a@example.com", "s", "b")
+    context = instance.starttls.call_args[1]["context"]
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+
+
+def test_header_injection_that_reaches_the_sender_is_a_sender_error():
+    sender = SMTPEmailSender("smtp.example.com", 587, "", "", "icop@example.com")
+    with (
+        patch("app.sender.smtplib.SMTP", return_value=MagicMock()),
+        pytest.raises(SenderError, match="email delivery failed"),
+    ):
+        sender.send("a@b.test", "hello\nBcc: victim@example.com", "b")

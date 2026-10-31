@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -5,11 +7,21 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from .database import get_db
+from . import bootstrap
+from .database import SessionLocal, get_db
 from .middleware import MetricsMiddleware
 from .routers import auth
 
-app = FastAPI(title="ICOP Auth Service", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # No-op unless BOOTSTRAP_ADMIN_EMAIL/PASSWORD are both set.
+    with SessionLocal() as db:
+        bootstrap.ensure_bootstrap_admin(db)
+    yield
+
+
+app = FastAPI(title="ICOP Auth Service", version="0.1.0", lifespan=lifespan)
 app.add_middleware(MetricsMiddleware)
 app.include_router(auth.router)
 

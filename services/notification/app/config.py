@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     DB_POOL_RECYCLE_SECONDS: int = 1800
     CELERY_BROKER_URL: str = "amqp://icop:icop@localhost:5672//"
 
+    # Webhooks to loopback/private/link-local addresses are refused (SSRF) --
+    # see app/sender.py:check_webhook_target. Only enable for a closed
+    # network where the webhook receiver is itself internal (e.g. an
+    # in-cluster chat bridge), knowing it also allows the metadata endpoint.
+    WEBHOOK_ALLOW_PRIVATE_TARGETS: bool = False
+
     # Empty by default -- the "email" channel is only registered if these
     # are set (see app/sender.py:get_sender_registry). "webhook" needs no
     # config and is always available. Same bring-your-own-infra shape as
