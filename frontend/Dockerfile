@@ -8,7 +8,7 @@ COPY . .
 # Tests and the type-check gate the image: a failing test means no image.
 RUN pnpm run lint && pnpm run test && pnpm run build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.29-alpine
 RUN rm -f /etc/nginx/conf.d/default.conf
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY docker/security-headers.conf /etc/nginx/snippets/security-headers.conf
